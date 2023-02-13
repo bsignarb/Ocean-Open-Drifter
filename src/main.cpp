@@ -14,9 +14,9 @@ void setup() {
 void loop() {
   //Serial.println("Boucle" + String(compteur));
   digitalWrite(led, LOW);
-  delay(3000);
-  digitalWrite(led, HIGH);
   delay(1000);
+  digitalWrite(led, HIGH);
+  delay(3000);
   compteur++;
 
   float v = get_voltage(); 
