@@ -9,6 +9,8 @@ float get_voltage();
    *  return -- a floating point value representing the voltage at the vbatt pin.
    */
 
+//void mesureEC();
+
 
 
 #endif
