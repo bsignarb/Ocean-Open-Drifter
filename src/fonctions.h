@@ -11,9 +11,8 @@
 #include <bits/stdc++.h>
 
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
-#include <sequencer2.h>   // imports a 2 function sequencer 
-#include <sequencer3.h>   // imports a 2 function sequencer 
 #include <Ezo_i2c_util.h> // brings in common print statements
+#include <sequencer2.h>   // imports a 2 function sequencer 
 
 #include "TSYS01.h"  // Capteur température BlueRobotics
 #include <SD.h>      // Carte SD
@@ -38,18 +37,12 @@
 #define SAL_ENABLED 1
 #define SG_ENABLED 0
 
-/*Mode de fonctionnement, valeur par défault en cas de de defaut de lecture du fichier config
-extern int led_mode;        // Utilise la Led pour controler ce qui se passe
-extern int debug_mode;      // Envoie les infos sur les liaison serie*/
-
 /* Pas utilisé pour le moment
 extern char ecData[48];                    // We make a 48 byte character array to hold incoming data from the EC circuit.
 extern char salData[48]; 
 extern char tdsData[48];
 extern char sgData[48];
 */
-
-//extern Ezo_board EC = Ezo_board(100, "EC");      //create an EC circuit object who's address is 100 and name is "EC"
 
 /* ---------- Fonctions liées à la carte Atlas EC EZO ----------*/
 void mesureEC();
@@ -120,17 +113,55 @@ void request_ec(char computerData[]);
 void mesure_temp();
   /* Envoie une demande de lecture au capteur et renvoie la température sur le moniteur série */
 
-
-/* ---------- Fonctions liées au GPS Grove v1.2 ----------*/
+/* ---------- Fonctions liées au GPS Grove v1.2 + horloge atomique ----------*/
 void init_gps(); 
   /* Initialise la communication avec le GPS en liaison série UART à 9600 bauds */
-void scanning_gps();
-  /* Envoie une demande de lecture au GPS et renvoie la position GPS et la date sur le moniteur série */
-void print_pos_gps();
+void scanning_gps_time();
+  /* Envoie une demande de lecture au GPS et renvoie la date sur le moniteur série */
+void scanning_gps_coord();
+  /* Envoie une demande de lecture au GPS et renvoie la position sur le moniteur série */
+void print_coord_gps();
   /* Utilisé dans scanning_gps() | Renvoie la position GPS si trame valide */
 void print_date_gps();
   /* Utilisé dans scanning_gps() | Renvoie la date et heure si trame valide */
 
+/* ---------- Fonctions liées à la carte SD et au fichier de config ----------*/
+void test_sd();
+  /* Initialise et teste la carte SD */
+void errormessage_sd();
+  /* Fait clignoter la led pour indiquer une erreur de carte SD */
+void lecture_config();
+  /* Lit le fichier de configuration */
+void refresh_config_values();
+  /* Réactualise les valeurs du programme en fonctions de celles lues dans le fichier config */
+void mesure_cycle_to_datachain();
+  /* Lance un cycle de mesure et stocke les paramètres mesurés dans datachain */
+void save_datachain_to_sd();
+  /* Vient écrire le contenu de datachain dans le fichier dataFilename sur la carte SD */
+
+/* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
+void reading_rtc();
+  /* Vient lire l'horloge RTC et écrire dans les variables utiles */
+void set_time_rtc(byte hour, byte min, byte sec);
+  /* Initialise manuellement heure:minute:secondes de l'horloge RTC */
+void set_date_rtc(byte day_of_month, byte day_of_week, byte month, byte year);
+  /* Initialise la date jour/mois/annéé de l'horloge RTC 
+  *
+  *  Paramètres :
+  *   - day_of_month : Numéro de jour dans le mois
+  *   - day_of_weeks : Numéro de jour dans la semaine (1-7)
+  *   - month : Numéro du mois de l'année
+  *   - year : /!\ ne rentrer en paramètre que les 2 derniers digits de l'année en cours  
+  * 
+  *  Exemple : set_date_rtc(20, 1, 2, 23); //Lundi 20 février 2023
+  */
+void set_rtc_by_gps();
+  /* Initialise la date de l'horloge RTC via les données GPS */
+void check_rtc_set();
+  /* Regarde si la RTC a été bien été initialisée 
+  *   OUI -> rtc_set = true  
+  *   NON -> rtc_set = false
+  */
 /* ---------- Fonctions annexes ----------*/
 float get_voltage();
   /* Lit la tension sur la broche VBATT_PIN et retourne la valeur
@@ -138,5 +169,16 @@ float get_voltage();
   */
 void scanner_i2c_adress();
   /* Scanne les appareils présents sur le port I2C et renvoie leur adresse */
+void led_blinkled(int nbr, int freq);
+  /* Fait clignoter la led sur un nombre de cycles et à une fréquence (en seconde) donnés */
+void all_sleep();
+  /* Endormissement général */
+void wake_up();
+  /* Réveil général */
+void cycle_standard();
+  /* Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */
+
+
+
 
 #endif
