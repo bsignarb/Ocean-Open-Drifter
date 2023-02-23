@@ -10,9 +10,13 @@ const int control_pin = 4; // pin qui controle l'allumage du régulateur
 int led_mode = 1;          // Utilise la Led pour contrôler ce qu'il se passe
 int debug_mode = 1;        // Envoie les infos sur le moniteur série
 
-int TIME_TO_SLEEP = 10;    // Durée d'endormissement entre 2 cycles complets de mesures (en sec) (rédéfinie ensuite par le fichier config)
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+
+
+
 int nbrMes = 3;            // Nombre de mesures à effectuer (rédéfinie ensuite par le fichier config)
 int bootCount = 0;         // Utile pour avoir un 1er cycle d'écriture dans fichier différent des cycles suivants
+int TIME_TO_SLEEP = 0;
 
 /*---------- Carte Atlas EC EZO ----------*/
 #define ecAddress 100                // Définition de l'adresse de la carte pour la communication I2C
@@ -48,11 +52,11 @@ TinyGPSPlus gps;                                  // Création d'un objet de la 
 
 float lattitude, longitude, altitude, vitesse;
 int nb_satellites;
-String coord;                                     // Pour format de position GPS en 1 seule écriture (coord = "Lattitude,Longitude")
+String coord;                                                                          // Pour format de position GPS en 1 seule écriture (coord = "Lattitude,Longitude")
 
-String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;    // Pour format de date en plusieurs variables
-String datenum_gps;                                   // Pour format de date en 1 seule écriture (datenum = "day/month/year")
-String datetime_gps;                                  // Pour format de date en 1 seule écriture (datetime = "hour:minute:second")
+String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;                 // Pour format de date en plusieurs variables
+String datenum_gps;                                                                    // Pour format de date en 1 seule écriture (datenum = "day/month/year")
+String datetime_gps;                                                                   // Pour format de date en 1 seule écriture (datetime = "hour:minute:second")
 
 /*---------- Carte SD et fichier config ----------*/
 String datachain = "";                                                                 // Chaine de donnée pour le stockage des paramètres mesurés
@@ -151,6 +155,23 @@ void wake_up(){
   digitalWrite(greenled, HIGH);
   digitalWrite(control_pin, HIGH); 
   delay(500);   
+}
+
+/**
+ * Sum numbers in a vector.
+ *
+ * This sum is the arithmetic sum, not some other kind of sum that only
+ * mathematicians have heard of.
+ *
+ * @param values Container whose values are summed.
+ * @return sum of `values`, or 0.0 if `values` is empty.
+ */
+void cycle_standard(){
+  test_sd();                   // Initialise et teste la carte SD
+  lecture_config();            // Lit le fichier de configuration
+  refresh_config_values();     // Réactualise les valeurs du programme en fonctions de celles lues dans le fichier config 
+  mesure_cycle_to_datachain(); // Lance un cycle de mesure et stocke les paramètres mesurés dans datachain 
+  save_datachain_to_sd();      // Vient écrire le contenu de datachain dans le fichier dataFilename sur la carte SD
 }
 
 /* ---------- Fonctions liées à la carte Atlas EC EZO ----------*/
@@ -361,7 +382,7 @@ void mesure_temp(){
   fast_temp = sensor_fastTemp.temperature();
   delay(200);
   if (debug_mode) {
-    Serial.print("Température : ");
+    Serial.print("Temperature : ");
     Serial.print(fast_temp);
     Serial.println(" °C");
   }
@@ -437,7 +458,7 @@ void print_coord_gps()
     coord += longitude; 
 
     if(debug_mode){
-      Serial.print("Données GPS : ");
+      Serial.print("Donnees GPS : ");
       
       Serial.print(coord);
       
@@ -446,7 +467,7 @@ void print_coord_gps()
 
       Serial.print(" | Altitude : ");
       Serial.print(altitude);
-      Serial.print(" mètres");
+      Serial.print(" metres");
 
       Serial.print(" | Vitesse : ");
       Serial.print(vitesse);
@@ -635,7 +656,7 @@ void save_datachain_to_sd(){
   if (dataFile) {                                        // Si fichier dispo, écrit le contenu de la datachain dans le fichier
     dataFile.println(datachain);
     dataFile.close();
-    if (debug_mode==1) Serial.println("Fichier créé avec succès");
+    if (debug_mode==1) Serial.println("Fichier cree avec succes");
     if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
   }
   else {                                                 // Si fichier non ouvert, afficher erreur
@@ -729,7 +750,7 @@ void set_rtc_by_gps(){
     
     if(debug_mode) {Serial.print("RTC set from GPS at ");Serial.println(datetime_rtc);Serial.println();}
   }else{
-    if(debug_mode) Serial.println("No GPS fix yet. Can't set RTC yet.\n");
+    if(debug_mode) Serial.println("No GPS fix yet. Cant set RTC yet.\n");
   }  
 }
 
@@ -747,11 +768,5 @@ void check_rtc_set()
 
 
 
-void cycle_standard(){
-  test_sd();                   // Initialise et teste la carte SD
-  lecture_config();            // Lit le fichier de configuration
-  refresh_config_values();     // Réactualise les valeurs du programme en fonctions de celles lues dans le fichier config 
-  mesure_cycle_to_datachain(); // Lance un cycle de mesure et stocke les paramètres mesurés dans datachain 
-  save_datachain_to_sd();      // Vient écrire le contenu de datachain dans le fichier dataFilename sur la carte SD
-}
+
 

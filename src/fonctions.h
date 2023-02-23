@@ -1,7 +1,7 @@
 #ifndef FONCTIONS
 #define FONCTIONS
 
-/* ---------- Appel des librairies ----------*/
+/* ---------- Librarie calls ----------*/
 #include <Arduino.h>
 #include <Wire.h>  // Enable I2C
 #include <SPI.h>   // Enable SPI
@@ -14,77 +14,79 @@
 #include <Ezo_i2c_util.h> // brings in common print statements
 #include <sequencer2.h>   // imports a 2 function sequencer 
 
-#include "TSYS01.h"  // Capteur température BlueRobotics
-#include <SD.h>      // Carte SD
-#include <DS3231.h>  // Horloge RTC
+#include "TSYS01.h"  // BlueRobotics temperature sensor
+#include <SD.h>      // SD card
+#include <DS3231.h>  // RTC clock
 
 //#include <SoftwareSerial.h>
 #include <HardwareSerial.h>
 #include <TinyGPS++.h>
 
-/* ---------- Définition des constantes ----------*/
-#define VBATT_PIN A0 // Broche pour le contrôle de la tension de la batterie
-#define DELAY 3000   // Délai du séquenceur 
+/* ---------- Definition of constants ----------*/
+#define VBATT_PIN A0 // Pin for battery voltage control
+#define DELAY 3000   // Sequencer delay
 
-// Définition du type de sonde | Voir fonction setting_ec_probe_type(double probeType)
+/** Definition of the probe type. See function setting_ec_probe_type(double probeType) */
 #define PROBE_TYPE 1.0 
   
-/* Définition des paramètres à renvoyer de la carte Atlas EC EZO (0 -> disabled / 1 -> enabled)
-*  Voir fonction void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
-*  Pour le moment 1 seul paramètre possible à la fois */
+/** Definition of the parameters to be sent back from the Atlas EC EZO card (0 -> disabled / 1 -> enabled)
+*  See function void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
+*  For the moment only 1 possible parameter at a time 
+*/
 #define EC_ENABLED 0
 #define TDS_ENABLED 0
 #define SAL_ENABLED 1
 #define SG_ENABLED 0
 
-/* Pas utilisé pour le moment
+/* Not used at the moment
 extern char ecData[48];                    // We make a 48 byte character array to hold incoming data from the EC circuit.
 extern char salData[48]; 
 extern char tdsData[48];
 extern char sgData[48];
 */
 
-/* ---------- Fonctions liées à la carte Atlas EC EZO ----------*/
-void mesureEC();
-  /* Envoie une demande de lecture à la car-te EC EZO et renvoie la mesure sur le moniteur série
-  *  en fonction des paramètres autorisés à être renvoyés
-  *  
-  *  Mesures possibles (pour le moment 1 seul paramètre possible à la fois) :
+/* ---------- Functions related to the Atlas EC EZO card ----------*/
+
+/** @brief Mesure de conductivité
+  * Sends a read request to the EZO EC board and returns the measurement to the serial monitor
+  * according to the parameters allowed to be returned
+  * 
+  * Possible measures (pour le moment 1 seul paramètre possible à la fois) :
   *   - Electrical conductivity
+  *   - Total dissolved solids
   *   - Total dissolved solids
   *   - Salinity
   *   - Specific gravity of seawater
-  *  
-  *  Pour activation ou non des paramètres, voir fonction void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
+  * To activate or not the parameters, see function void Cf #enable_ec_parameters(bool ec, bool tds, bool s, bool sg )  
   */
+void mesureEC();
 
+/** @brief Defines the type of ec ezo Atlas probe
+  *
+  * @param PROBE_TYPE defined in the header of functions.h
+  * Possible choices : "K0.1"
+  *                   "K1.0"
+  *                   "K10"
+  */  
 void setting_ec_probe_type(); 
-  /* Défini le type de sonde ec ezo Atlas
-  *
-  *   Constante à modifier définie plus haut (PROBE_TYPE)
-  * 
-  *   Choix possibles : "K0.1"
-  *                     "K1.0"
-  *                     "K10"
-  */
 
+/** @brief Controls the active parameters at the output of the conductivity sensor
+  *   @param ec  => Electrical conductivity, 
+  *   @param tds => Total dissolved solids, 
+  *   @param sal => Salinity, 
+  *   @param sg  => Specific gravity of seawater
+  *
+  *  Constants to be modified defined in the header of functions.h (EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED)
+  *
+  *  @param Choix_possibles : "1" = enabled
+  *                           "0" = disabled
+  */
 void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ); 
-  /* Contôle les paramètres actifs en sortie 
-  *  ec  => Electrical conductivity, 
-  *  tds => Total dissolved solids, 
-  *  sal => Salinity, 
-  *  sg  => Specific gravity of seawater
-  *
-  *  Constantes à modifier définies plus haut (EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED)
-  *
-  *  Choix possibles : "1" = enabled
-  *                    "0" = disabled
-  */
-
-void send_ec_cmd_and_response(char cmd[]);
-  /* Envoie la commande entrée en paramètre et renvoie sur le port série la réponse du capteur ec
+  
+/** @brief Sends the command entered in parameter and returns on the serial port the answer of the sensor ec
   *  
-  *  Choix possibles :
+  * @param cmd
+  *  Possible choices :
   *  "I"       => Device firmware information | Trame retournée : "?I,EC,2.15"
   *  "Name,?"  => Device name information | Trame retournée : "?NAME,?r"
   *  "Status"  => Voltage at Vcc pin and reason for last restart | Trame retournée : "?STATUS,P,3.34"
@@ -103,82 +105,106 @@ void send_ec_cmd_and_response(char cmd[]);
   *  "L,n"     => "L,1" LED on ; "L,0"LED off 
   *  "Find"    => LED rapidly blinks white, used to help find device 
   */
-
+void send_ec_cmd_and_response(char cmd[]);
+  
 /* Plus utilisées pour le moment Anciennes fonctions de mesure EC EZO
 void mesureEClib(); 
 void request_ec(char computerData[]);
 */
 
-/* ---------- Fonctions liées au capteur de température BlueRobotics ----------*/
+/* ---------- Functions related to the BlueRobotics temperature sensor ----------*/
+
+/** @brief Sends a reading request to the sensor and returns the temperature to the serial monitor */
 void mesure_temp();
-  /* Envoie une demande de lecture au capteur et renvoie la température sur le moniteur série */
+  
+/* ---------- Grove GPS v1.2 + atomic clock related functions ----------*/
 
-/* ---------- Fonctions liées au GPS Grove v1.2 + horloge atomique ----------*/
+/** @brief Initialize the communication with the GPS in UART serial link at 9600 bauds */
 void init_gps(); 
-  /* Initialise la communication avec le GPS en liaison série UART à 9600 bauds */
+
+/** @brief Sends a read request to the GPS and returns the date to the serial monitor */  
 void scanning_gps_time();
-  /* Envoie une demande de lecture au GPS et renvoie la date sur le moniteur série */
+  
+/** @brief Sends a read request to the GPS and returns the position to the serial monitor */
 void scanning_gps_coord();
-  /* Envoie une demande de lecture au GPS et renvoie la position sur le moniteur série */
+
+/** @brief Returns the GPS position if valid frame | Used in scanning_gps() */
 void print_coord_gps();
-  /* Utilisé dans scanning_gps() | Renvoie la position GPS si trame valide */
+  
+/** @brief Returns date and time if valid frame | Used in scanning_gps() */
 void print_date_gps();
-  /* Utilisé dans scanning_gps() | Renvoie la date et heure si trame valide */
+  
 
-/* ---------- Fonctions liées à la carte SD et au fichier de config ----------*/
+/* ---------- Functions related to the SD card and the config file ----------*/
+
+/** @brief Initializes and tests the SD card */
 void test_sd();
-  /* Initialise et teste la carte SD */
+
+/** @brief Flashes the LED to indicate an SD card error */  
 void errormessage_sd();
-  /* Fait clignoter la led pour indiquer une erreur de carte SD */
+
+/** @brief Reads the configuration file */
 void lecture_config();
-  /* Lit le fichier de configuration */
+
+/** @brief Refreshes the program values according to those read in the config file */  
 void refresh_config_values();
-  /* Réactualise les valeurs du programme en fonctions de celles lues dans le fichier config */
+
+/** @brief Starts a measurement cycle and stores the measured parameters in datachain */  
 void mesure_cycle_to_datachain();
-  /* Lance un cycle de mesure et stocke les paramètres mesurés dans datachain */
+
+/** @brief Writes the content of datachain to the dataFilename file on the SD card */  
 void save_datachain_to_sd();
-  /* Vient écrire le contenu de datachain dans le fichier dataFilename sur la carte SD */
+  
+/* ---------- Functions related to the RTC DS3231 Adafruit ----------*/
 
-/* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
+/** @brief Reads the RTC clock and writes to useful variables */
 void reading_rtc();
-  /* Vient lire l'horloge RTC et écrire dans les variables utiles */
+
+/** @brief Manually initializes hour:minute:seconds of the RTC clock */  
 void set_time_rtc(byte hour, byte min, byte sec);
-  /* Initialise manuellement heure:minute:secondes de l'horloge RTC */
-void set_date_rtc(byte day_of_month, byte day_of_week, byte month, byte year);
-  /* Initialise la date jour/mois/annéé de l'horloge RTC 
+
+/** @brief Manually initializes the day/month/year date of the RTC clock
   *
-  *  Paramètres :
-  *   - day_of_month : Numéro de jour dans le mois
-  *   - day_of_weeks : Numéro de jour dans la semaine (1-7)
-  *   - month : Numéro du mois de l'année
-  *   - year : /!\ ne rentrer en paramètre que les 2 derniers digits de l'année en cours  
+  * @param day_of_month Day number in the month
+  * @param day_of_weeks Day of the week number (1-7)
+  * @param month Month number of the year
+  * @param year  Year @warning /!\ ne rentrer en paramètre que les 2 derniers digits de l'année en cours  
   * 
-  *  Exemple : set_date_rtc(20, 1, 2, 23); //Lundi 20 février 2023
-  */
+  *  Example : set_date_rtc(20, 1, 2, 23); //Monday 20 February 2023
+  */  
+void set_date_rtc(byte day_of_month, byte day_of_week, byte month, byte year);
+
+/** @brief Initialize the date of the RTC via GPS data */  
 void set_rtc_by_gps();
-  /* Initialise la date de l'horloge RTC via les données GPS */
+
+/** @brief Check if the RTC has been properly initialized 
+  *   If yes -> rtc_set = true  
+  *   If no -> rtc_set = false
+  */  
 void check_rtc_set();
-  /* Regarde si la RTC a été bien été initialisée 
-  *   OUI -> rtc_set = true  
-  *   NON -> rtc_set = false
-  */
+  
+
 /* ---------- Fonctions annexes ----------*/
-float get_voltage();
-  /* Lit la tension sur la broche VBATT_PIN et retourne la valeur
-  *  Constante à modifier définie plus haut (VBATT_PIN)
+
+/** @brief Reads the voltage on the VBATT_PIN pin and returns the value
+  * @param VBATT_PIN Constante à modifier définie plus haut 
+  * @returns float voltage
   */
+float get_voltage();
+
+/** @brief Scans the devices present on the I2C port and returns their address */  
 void scanner_i2c_adress();
-  /* Scanne les appareils présents sur le port I2C et renvoie leur adresse */
+
+/** @brief Flashes the LED on a given number of cycles and at a given frequency (in seconds) */  
 void led_blinkled(int nbr, int freq);
-  /* Fait clignoter la led sur un nombre de cycles et à une fréquence (en seconde) donnés */
+
+/** @brief General sleepiness */  
 void all_sleep();
-  /* Endormissement général */
+
+/** @brief General wake up */  
 void wake_up();
-  /* Réveil général */
+
+/** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
 void cycle_standard();
-  /* Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */
-
-
-
-
+  
 #endif

@@ -37,10 +37,11 @@ void step1(){
   mesure_temp();*/
   //check_rtc_set();
 
-  set_rtc_by_gps();       // MàJ RTC via données GPS
+  //set_rtc_by_gps();       // MàJ RTC via données GPS (pour le moment 1 fois tous les 3 cycles de mesure)
 
   for(i=0; i<3; i++){
-    cycle_standard();
+    //cycle_standard();
+    
     Serial.println("\n----------------------------------------------------------------------------\n");
   }
 }
