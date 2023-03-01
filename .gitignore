@@ -3,3 +3,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+lib/DS3231-master
+lib/TinyGPSPlus-master
