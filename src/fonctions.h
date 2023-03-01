@@ -12,7 +12,6 @@
 
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
 #include <Ezo_i2c_util.h> // brings in common print statements
-#include <sequencer2.h>   // imports a 2 function sequencer 
 
 #include "TSYS01.h"  // BlueRobotics temperature sensor
 #include <SD.h>      // SD card
@@ -21,6 +20,8 @@
 //#include <SoftwareSerial.h>
 #include <HardwareSerial.h>
 #include <TinyGPS++.h>
+
+#include <Adafruit_INA219.h> // Voltage and current sensor
 
 /* ---------- Definition of constants ----------*/
 #define VBATT_PIN A0 // Pin for battery voltage control
@@ -45,6 +46,8 @@ extern char tdsData[48];
 extern char sgData[48];
 */
 
+extern const int control_pin_EC; // pin qui controle l'allumage du régulateur
+
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
 /** @brief Mesure de conductivité
@@ -65,8 +68,8 @@ void mesureEC();
   *
   * @param PROBE_TYPE defined in the header of functions.h
   * Possible choices : "K0.1"
-  *                   "K1.0"
-  *                   "K10"
+  *                    "K1.0"
+  *                    "K10"
   */  
 void setting_ec_probe_type(); 
 
@@ -133,8 +136,8 @@ void print_coord_gps();
   
 /** @brief Returns date and time if valid frame | Used in scanning_gps() */
 void print_date_gps();
-  
 
+  
 /* ---------- Functions related to the SD card and the config file ----------*/
 
 /** @brief Initializes and tests the SD card */
@@ -180,9 +183,15 @@ void set_rtc_by_gps();
 /** @brief Check if the RTC has been properly initialized 
   *   If yes -> rtc_set = true  
   *   If no -> rtc_set = false
+  * @return 1 if RTC has been correctly initialised, 0 otherwise
   */  
-void check_rtc_set();
-  
+int check_rtc_set();
+
+
+/* ---------- Functions related to INA219 current sensor ----------*/
+
+void init_ina219();
+void get_current();  
 
 /* ---------- Fonctions annexes ----------*/
 
@@ -202,9 +211,13 @@ void led_blinkled(int nbr, int freq);
 void all_sleep();
 
 /** @brief General wake up */  
-void wake_up();
+void all_wakeup();
 
 /** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
-void cycle_standard();
+void deployed_cycle();
+
+void recovery_cycle();
+
+
   
 #endif

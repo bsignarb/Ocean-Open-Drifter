@@ -3,87 +3,88 @@
 using namespace std;
 /* ------------------------------------------------- DECLARATIONS ------------------------------------------------------------------*/
 
-/*---------- Déclarations générales ----------*/ 
-const int greenled = 25;   // Led d'information
-const int control_pin = 4; // pin qui controle l'allumage du régulateur
+/*---------- General declarations ----------*/ 
+const int greenled = 25;              // Information led 
+extern const int control_pin_EC = 10; // Controls the power supply of the EC ezo sensor
 
-int led_mode = 1;          // Utilise la Led pour contrôler ce qu'il se passe
-int debug_mode = 1;        // Envoie les infos sur le moniteur série
+int led_mode = 1;                     // Use the LED to indicate what's going on
+int debug_mode = 1;                   // Sends information to the serial monitor
 
-#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define uS_TO_S_FACTOR 1000000        // Conversion factor for micro seconds to seconds 
 
-
-
-int nbrMes = 3;            // Nombre de mesures à effectuer (rédéfinie ensuite par le fichier config)
-int bootCount = 0;         // Utile pour avoir un 1er cycle d'écriture dans fichier différent des cycles suivants
+int nbrMes = 3;                       // Number of measurements to perform (then redefined by the config file)
+int bootCount = 0;                    // Useful to have a 1st cycle of writing in file different from the following cycles
 int TIME_TO_SLEEP = 0;
 
 /*---------- Carte Atlas EC EZO ----------*/
-#define ecAddress 100                // Définition de l'adresse de la carte pour la communication I2C
-int ecDelay = 300;                   // Définition des délais               
+#define ecAddress 100                 // Board address definition for I2C communication
+int ecDelay = 300;                    // Delays definition             
 int ecDelay2 = 600;
 
-Ezo_board EC = Ezo_board(100, "EC"); // Création d'un object EC de la classe Ezo_board d'adresse 100 
+Ezo_board EC = Ezo_board(100, "EC");  // EC object creation of the Ezo_board class with address 100
 
 float conductivity, total_dissolved_solids, salinity, seawater_gravity;
 
-/* Paramètres non utilisés pour le moment 
-byte ecCode = 0;                    // Used to hold the I2C response code.
-byte ecInChar = 0;                  // Used as a 1 byte buffer to store in bound bytes from the EC Circuit.
-char ecData[48];                    // We make a 48 byte character array to hold incoming data from the EC circuit.
-char salData[48];                   // We make a 48 byte character array to hold incoming data from the EC circuit.
+/* Parameters not used for the moment
+byte ecCode = 0;                      // Used to hold the I2C response code.
+byte ecInChar = 0;                    // Used as a 1 byte buffer to store in bound bytes from the EC Circuit.
+char ecData[48];                      // We make a 48 byte character array to hold incoming data from the EC circuit.
+char salData[48];                     // We make a 48 byte character array to hold incoming data from the EC circuit.
 char tdsData[48];
 char sgData[48];
-char *ec;                           // Char pointer used in string parsing.
-char *tds;                          // Char pointer used in string parsing.
-char *sal;                          // Char pointer used in string parsing.
-char *sg;                           // Char pointer used in string parsing.
+char *ec;                             // Char pointer used in string parsing.
+char *tds;                            // Char pointer used in string parsing.
+char *sal;                            // Char pointer used in string parsing.
+char *sg;                             // Char pointer used in string parsing.
 */
 
-/*---------- Capteur de température BlueRobotics ----------*/
-TSYS01 sensor_fastTemp;                           //Déclaration capteur de température BlueRobotics
+/*---------- BlueRobotics temperature sensor ----------*/
+TSYS01 sensor_fastTemp;               // Bluerobotics temperature sensor declaration
 float fast_temp;
 
-/*---------- GPS Grove v1.2 + horloge atomique ----------*/
-#define RXD 25                                    //Définition des ports de communication UART pour le GPS
+/*---------- Grove GPS v1.2 + atomic clock ----------*/
+#define RXD 25                        // UART ports declaration for communication with GPS
 #define TXD 26 
-HardwareSerial neogps(1);                         // Creation instance module GPS
-TinyGPSPlus gps;                                  // Création d'un objet de la classe TinyGPSPlus
+HardwareSerial neogps(1);             // Instance creation for GPS module
+TinyGPSPlus gps;                      // Object creation from TinyGPSPlus class
 
 float lattitude, longitude, altitude, vitesse;
 int nb_satellites;
-String coord;                                                                          // Pour format de position GPS en 1 seule écriture (coord = "Lattitude,Longitude")
+String coord;                                                                          // For GPS position format in 1 writing (coord = "Lattitude,Longitude")
 
-String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;                 // Pour format de date en plusieurs variables
-String datenum_gps;                                                                    // Pour format de date en 1 seule écriture (datenum = "day/month/year")
-String datetime_gps;                                                                   // Pour format de date en 1 seule écriture (datetime = "hour:minute:second")
+String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;                 // For date format in several variables
+String datenum_gps;                                                                    // For date format in 1 writing (datenum = "day/month/year")
+String datetime_gps;                                                                   // For date format in 1 writing  (datetime = "hour:minute:second")
 
-/*---------- Carte SD et fichier config ----------*/
-String datachain = "";                                                                 // Chaine de donnée pour le stockage des paramètres mesurés
-const int cspin_SD=5;                                                                  // Signal de sélection bus SPI
-String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // Variables du fichier config.txt
-File confFile;                                                                         // Pour lecture du fichier config.txt
+/*---------- SD card and config file ----------*/
+String datachain = "";                                                                 // Data string for storing the measured parameters
+const int cspin_SD=5;                                                                  // SPI bus selection signal
+String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
+File confFile;                                                                         // To read the config.txt file
 
-String fichier_config = "/config.txt";                                                 // Nom du fichier de configuration
-String dataFilename = "/datalog.txt";                                                  // Nom du fichier de données
+String fichier_config = "/config.txt";                                                 // Name of the configuration file
+String dataFilename = "/datalog.txt";                                                  // Data file name
 
 /*---------- RTC DS3231 Adafruit ----------*/
-DS3231 Clock;                                                           // Création d'un objet de la classe DS3231
+DS3231 Clock;                                                           // Object creation from DS3231 class
 bool Century = false;
 bool h12;
 bool PM;
 
-String second_rtc, minute_rtc, hour_rtc, day_rtc, month_rtc, year_rtc;  // Pour format de date en plusieurs variables
-String datenum_rtc;                                                     // Pour format de date en 1 seule écriture (datenum = "day/month/year")
-String timenum_rtc;                                                     // Pour format de date en 1 seule écriture (datetime = "hour:minute:second")
+String second_rtc, minute_rtc, hour_rtc, day_rtc, month_rtc, year_rtc;  // For date format in several variables
+String datenum_rtc;                                                     // For date format in 1 writing (datenum = "day/month/year")
+String timenum_rtc;                                                     // For date format in 1 writing(datetime = "hour:minute:second")
 String datetime_rtc;       
 
-bool rtc_set = false;                                                   // Permet de savoir si la RTC a bien été initialisée
+bool rtc_set = false;                                                   // To know if the RTC has been correctly initialized
+
+/*---------- INA219 current sensor Adafruit ----------*/
+Adafruit_INA219 ina219;
 
 /* ------------------------------------------------- FONCTIONS ------------------------------------------------------------------*/
 
-/* ---------- Fonctions annexes ----------*/
-/*SplitStr Pas utilisée pour le moment
+/* ---------- Auxiliary functions ----------*/
+/*SplitStr Not used for the moment
 void SplitStr(string str)
 {
     string s = "";
@@ -121,7 +122,7 @@ void scanner_i2c_adress()
   for (byte i = 8; i < 127; i++)
   {
     Wire.beginTransmission (i);          // Begin I2C transmission Address (i)
-    if (Wire.endTransmission () == 0)  // Receive 0 = success (ACK response) 
+    if (Wire.endTransmission () == 0)    // Receive 0 = success (ACK response) 
     {
       Serial.print ("Found address: ");
       Serial.print (i, DEC);
@@ -146,41 +147,44 @@ void led_blinkled(int nbr, int freq) {   // freq en sec = freq interval between 
 }
 
 void all_sleep(){
-  digitalWrite(greenled, LOW);
-  digitalWrite(control_pin, LOW); 
-  delay(300);                       // on laisse le temps au régulateur de bien s'éteindre avant de passer en deep sleep
+  if(debug_mode) Serial.println("\n--- All sleep ---\n");
+  //digitalWrite(greenled, LOW);
+  //send_ec_cmd_and_response("L,0");     // EC sensor led off
+  send_ec_cmd_and_response("Sleep");     // Command line to put ec sensor in sleeping mode
+  delay(500); 
+  //digitalWrite(control_pin_EC, LOW);   // Switch off power supply
+  neogps.println("$PMTK161,0*28");       // Command line to put GPS in sleeping mode
+  delay(500);                       
 }
 
-void wake_up(){
-  digitalWrite(greenled, HIGH);
-  digitalWrite(control_pin, HIGH); 
+void all_wakeup(){
+  if(debug_mode) Serial.println("\n--- All wake up ---\n");
+  //digitalWrite(greenled, HIGH);
+  //digitalWrite(control_pin_EC, HIGH); // Switch on power supply
+  send_ec_cmd_and_response("Sleep");    // Sending any command to wake up ec sensor
+  delay(500);    
+  //send_ec_cmd_and_response("L,1");    // EC sensor led on
+  neogps.println("a");                  // Sending any character to wake up gps
   delay(500);   
 }
 
-/**
- * Sum numbers in a vector.
- *
- * This sum is the arithmetic sum, not some other kind of sum that only
- * mathematicians have heard of.
- *
- * @param values Container whose values are summed.
- * @return sum of `values`, or 0.0 if `values` is empty.
- */
-void cycle_standard(){
-  test_sd();                   // Initialise et teste la carte SD
-  lecture_config();            // Lit le fichier de configuration
-  refresh_config_values();     // Réactualise les valeurs du programme en fonctions de celles lues dans le fichier config 
-  mesure_cycle_to_datachain(); // Lance un cycle de mesure et stocke les paramètres mesurés dans datachain 
-  save_datachain_to_sd();      // Vient écrire le contenu de datachain dans le fichier dataFilename sur la carte SD
+void deployed_cycle(){
+  mesure_cycle_to_datachain(); // Starts a measurement cycle and stores the measured parameters in datachain
+  save_datachain_to_sd();      // Writes the content of datachain to the dataFilename file on the SD card
 }
 
-/* ---------- Fonctions liées à la carte Atlas EC EZO ----------*/
+void recovery_cycle(){
+  mesure_cycle_to_datachain(); // Starts a measurement cycle and stores the measured parameters in datachain
+  save_datachain_to_sd();      // Writes the content of datachain to the dataFilename file on the SD card
+}
+
+/* ---------- Functions related to Atlas EC EZO sensor ----------*/
 void mesureEC(){
-  EC.send_read_cmd(); // Envoie une demande de lecture au capteur
+  EC.send_read_cmd(); // Sends a read request to the sensor
   delay(1000);
   if (EC_ENABLED){
     EC.receive_read_cmd(); 
-    conductivity = EC.get_last_received_reading(); // Retourne la dernière lecture du capteur en float
+    conductivity = EC.get_last_received_reading(); // Returns the last sensor reading in float
     if(debug_mode){
       Serial.print("Conductivité : ");
       Serial.print(conductivity);
@@ -222,10 +226,10 @@ void mesureEC(){
 }
 
 void setting_ec_probe_type() { 
-  EC.send_cmd_with_num("K,", PROBE_TYPE);  //sends any command with the number appended as a string afterwards
+  EC.send_cmd_with_num("K,", PROBE_TYPE);  // Sends any command with the number appended as a string afterwards
   delay(ecDelay);
   Serial.println("Probe type : ");
-  receive_and_print_response(EC); //used to handle receiving responses and printing them in a common format
+  receive_and_print_response(EC);          // Used to handle receiving responses and printing them in a common format
   Serial.println();
 }
 
@@ -254,7 +258,7 @@ void send_ec_cmd_and_response(char cmd[]) {
   Serial.println();
 }
 
-/* Plus utilisées pour le moment Anciennes fonctions de mesure EC EZO
+/* Pas utilisées pour le moment, fonctions de mesure EC EZO
 void mesureEClib() {
   if (debug_mode==1) Serial.println("--- EC Sensor :");
   Wire.beginTransmission(ecAddress);   // Call the circuit by its ID number.
@@ -376,7 +380,7 @@ void request_ec(char computerData[]) {
 }
 */
 
-/* ---------- Fonctions liées au capteur de température BlueRobotics ----------*/
+/* ---------- Functions related to BlueRobotics temperature sensor ----------*/
 void mesure_temp(){
   sensor_fastTemp.read();
   fast_temp = sensor_fastTemp.temperature();
@@ -388,7 +392,7 @@ void mesure_temp(){
   }
 }
 
-/* ---------- Fonctions liées au GPS Grove v1.2 ----------*/
+/* ---------- Functions related to Grove GPS v1.2 + atomic clock related functions ----------*/
 void init_gps(){
   neogps.begin(9600, SERIAL_8N1, RXD, TXD); // begin GPS hardware serial
 }
@@ -397,7 +401,7 @@ void scanning_gps_time(){
   boolean newData = false;
   for (unsigned long start = millis(); millis() - start < 1000;)
   {
-    while (neogps.available()) // Si données gps disponibles
+    while (neogps.available()) // If gps data available
     {
       if (gps.encode(neogps.read()))
       {
@@ -421,7 +425,7 @@ void scanning_gps_coord(){
   boolean newData = false;
   for (unsigned long start = millis(); millis() - start < 1000;)
   {
-    while (neogps.available()) // Si données gps disponibles
+    while (neogps.available()) // If gps data available
     {
       if (gps.encode(neogps.read()))
       {
@@ -451,7 +455,7 @@ void print_coord_gps()
     altitude = gps.altitude.meters();
     vitesse = gps.speed.kmph();
 
-    // Concaténation en coord pour faciliter le traitement sur datachain (coord = "Lattitude,Longitude")
+    // Concatenation in coord to facilitate processing on datachain (coord = "Lattitude,Longitude")
     coord = "(Lat)";   
     coord += lattitude; 
     coord += ",(Long)";
@@ -487,7 +491,7 @@ void print_date_gps(){
     month_gps = gps.date.month();
     year_gps = gps.date.year();
     
-    // Concaténation en datenum pour faciliter le traitement sur datachain (datenum = "day/month/year")
+    // Concatenation in datenum to facilitate processing on datachain (datenum = "day/month/year")
     datenum_gps = "";   
     datenum_gps += day_gps; datenum_gps += "/";
     datenum_gps += month_gps; datenum_gps += "/";
@@ -527,10 +531,10 @@ void print_date_gps(){
 
 }
 
-/* ---------- Fonctions liées à la carte SD et au fichier de config ----------*/
+/* ---------- Functions related to the SD card and the config file ----------*/
 void test_sd(){
   if (debug_mode) Serial.print("Initializing SD card... : ");   
-  if (!SD.begin(cspin_SD)) {                                           // Vérifie que la carte SD soit présente et puisse être initialisée (pin 5 par défaut)             
+  if (!SD.begin(cspin_SD)) {                                           // Checks that the SD card is present and can be initialized (pin 5 by default)            
     if (debug_mode) Serial.println("Card failed, or not present");
     if (led_mode==1){
       errormessage_sd();
@@ -541,7 +545,7 @@ void test_sd(){
 }
 
 void errormessage_sd(){
-  for (int i=0; i <= 8; i++){                    // dans la boucle for il y a 1s, donc on a 8 seconde au total
+  for (int i=0; i <= 8; i++){                   
       digitalWrite(greenled, HIGH); delay(400);
       //led_blinked(3,100);
       digitalWrite(greenled, LOW); delay (300);
@@ -549,7 +553,7 @@ void errormessage_sd(){
 }
 
 void lecture_config(){
-  confFile = SD.open(fichier_config, FILE_READ); // Ouvre fichier config.txt sur carte SD
+  confFile = SD.open(fichier_config, FILE_READ); // Opens config.txt file on SD card
 
   char phrase[200];
   byte index = 0;
@@ -561,27 +565,27 @@ void lecture_config(){
     if(debug_mode) Serial.println("Opening "+fichier_config);
     while (confFile.available()) {
       x = confFile.read();
-      if (x!='\n') {       // Si pas de retour à la ligne
-        phrase[index] = x; // On remplit phrase[] des caractères de la ligne actuelle du fichier
+      if (x!='\n') {       // If no line break
+        phrase[index] = x; // Fill phrase[] with the characters of the current line of the file
         index++;
-      } else {             // Dés qu'on a saut de ligne, on traite phrase[] pour en extraire les infos
+      } else {             // As soon as we have line break, we process phrase[] to extract the information
         if (index != 0) {
           reste = phrase;
-          reste = reste.substring(0,index); // Créé sous chaine "reste" recopiant phrase[] de 0 jusqu'à index
+          reste = reste.substring(0,index); // Created under string "reste" recopying phrase[] from 0 to index
           index=0;
-          // Suppression des commentaires
-          k = reste.indexOf(";");           // Retourne l'index (la position) du caractère ";"
-          if (k!=0) {                       // S'il n'est pas en tout début de ligne
-            if (k!=-1) {                    // S'il existe bel et bien
-              reste = reste.substring(0,k); // Crée une sous chaine de ce qu'il est écrit avant ";"
+          // Deleting comments
+          k = reste.indexOf(";");           // Returns the index (position) of the character ";"
+          if (k!=0) {                       // If it is not at the very beginning of the line
+            if (k!=-1) {                    // If it does exist
+              reste = reste.substring(0,k); // Creates a sub-string of what is written before ";".
             }
-            reste.trim();                   // Supprime les espaces au début et à la fin
+            reste.trim();                   // Removes spaces at the beginning and at the end
             
-            // Extrait les valeurs pour les placer dans les variables du programme
-            if (reste.indexOf('=') >0) {                             // Signe égal trouvé
-              String clef = reste.substring(0,reste.indexOf('='));   // Crée une sous chaine de ce qui se trouve avant "="
-              String valeur = reste.substring(reste.indexOf('=')+1); // Crée une sous chaine de ce qui se trouve après "="
-              if (clef == "id_logger") id_logger = valeur;           // Association des variables
+            // Extract the values to place them in the program variables
+            if (reste.indexOf('=') >0) {                             // Equal sign found
+              String clef = reste.substring(0,reste.indexOf('='));   // Creates a sub-string of what is before "=".
+              String valeur = reste.substring(reste.indexOf('=')+1); // Creates a sub-string of what is after "=".
+              if (clef == "id_logger") id_logger = valeur;           // Association of variables
               if (clef == "delay_batch") delay_batch = valeur;
               if (clef == "number_measures") number_measures = valeur;
               if (clef == "debug_mode") debug_mode_sd = valeur;
@@ -592,7 +596,7 @@ void lecture_config(){
         }          
       }
      }
-    confFile.close(); // Ferme le fichier config
+    confFile.close(); // Close config file
   } else {
     Serial.println("error opening "+fichier_config);
     while(1) errormessage_sd();
@@ -600,35 +604,35 @@ void lecture_config(){
 }
 
 void refresh_config_values(){
-  TIME_TO_SLEEP=delay_batch.toInt();  // Association des variables du programme avec celles lues sur la carte SD
+  TIME_TO_SLEEP=delay_batch.toInt();  // Association of program variables with those read from the SD card
   nbrMes=number_measures.toInt();            
   debug_mode=debug_mode_sd.toInt();  
   led_mode=led_mode_sd.toInt(); 
 }
 
 void mesure_cycle_to_datachain(){
-  reading_rtc(); // Acquisition date et heure via gps   
+  reading_rtc(); // Date and time acquisition via gps
 
-  // Crée une nouvelle datachain pour stocker les valeurs mesurées
+  // Create a new dataschain to store the measured values
   datachain = "";                               // Init datachain
-  datachain += datetime_rtc;                    // Ecrit date et heure dans datachain     
-  
-  enable_ec_parameters(EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED); 
+  datachain += datetime_rtc;                    // Write date and time in datachain
 
-  // Lit les capteurs plusieurs fois et ajoute leurs valeurs à datachain
+  enable_ec_parameters(EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED); // Controls the active parameters at the output of the conductivity sensor
+
+  // Reads the sensors several times and adds their values to datachain
   for(int n=1; n<=nbrMes; n++){
     if(debug_mode){Serial.print("--- Mesure n° : "); Serial.print(n); Serial.print("/");Serial.println(nbrMes);}
 
-    mesureEC();          // Mesure capteur Atlas ec ezo
-    mesure_temp();       // Mesure capteur de température
-    scanning_gps_coord(); // Acquisition coordonnées gps
+    mesureEC();           // Atlas ec ezo sensor measure
+    mesure_temp();        // Temperature sensor measure
+    scanning_gps_coord(); // Gps coordinates acquisition
     if(debug_mode) Serial.println("");
 
     datachain += " | ";  
-    datachain += coord; datachain += " ; ";       // Ecrit coordonnées dans datachain    
-    datachain += fast_temp; datachain += "°C ; "; // Ecrit température dans datachain
+    datachain += coord; datachain += " ; ";       // Writte coordinates in datachain
+    datachain += fast_temp; datachain += "°C ; "; // Writte temperature in datachain
     
-    // Ecriture ec ezo en fonction des paramètres enabled
+    // Writing ec ezo unity according to the enabled parameters
     if (EC_ENABLED){ 
       datachain += conductivity; datachain += "uS/cm ";
     }
@@ -643,7 +647,7 @@ void mesure_cycle_to_datachain(){
     }
   }
 
-  // Affiche datachain sur le terminal
+  // Display datachain on terminal
   if (debug_mode==1) {
     Serial.print("Datachain complétée : "); 
     Serial.println(datachain);
@@ -652,14 +656,14 @@ void mesure_cycle_to_datachain(){
 }
 
 void save_datachain_to_sd(){
-  File dataFile = SD.open(dataFilename, FILE_APPEND);    // FILE_APPEND pour esp32, FILE_WRITE pour arduino
-  if (dataFile) {                                        // Si fichier dispo, écrit le contenu de la datachain dans le fichier
+  File dataFile = SD.open(dataFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
+  if (dataFile) {                                        // If file available, writes the content of the datachain to the file
     dataFile.println(datachain);
     dataFile.close();
     if (debug_mode==1) Serial.println("Fichier cree avec succes");
     if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
   }
-  else {                                                 // Si fichier non ouvert, afficher erreur
+  else {                                                 // If file not opened, display error
     if (debug_mode==1) Serial.println("error opening file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
@@ -738,15 +742,15 @@ void set_rtc_by_gps(){
   }
   if (gps.date.isValid() && gps.time.isValid())
   {
-    // Mise à jour heure:minute:seconde
+    // Updating hour:minute:second
     Clock.setHour(gps.time.hour()+1); 
     Clock.setMinute(gps.time.minute());
     Clock.setSecond(gps.time.second());
     
-    // Mise à jour jour/mois/année
+    // Updating day/month/year 
     Clock.setDate(gps.date.day()); 
     Clock.setMonth(gps.date.month());
-    Clock.setYear(gps.date.year()-2000); // Ne garde que les 2 derniers digits de l'année
+    Clock.setYear(gps.date.year()-2000); // Keep only the last 2 digits of the year
     
     if(debug_mode) {Serial.print("RTC set from GPS at ");Serial.println(datetime_rtc);Serial.println();}
   }else{
@@ -754,19 +758,53 @@ void set_rtc_by_gps(){
   }  
 }
 
-void check_rtc_set()
+int check_rtc_set()
 {
-  if(Clock.getHour(h12, PM) == 0 && Clock.getMinute() == 0 && Clock.getSecond() == 0 && Clock.getYear() < 2010)
+  if(Clock.getYear() < 2010)
   {
     rtc_set = false;
     Serial.println("RTC time not set\n");
+    return 0;
   }else{
     rtc_set = true;
     Serial.println("RTC time set\n");
+    return 1;
   }
 }
 
+/* ---------- Functions related to INA219 current sensor ----------*/
+void init_ina219(){
+  if (! ina219.begin()) {
+    if(debug_mode) Serial.println("Failed to find INA219 chip");
+  }
+  else{ 
+    if(debug_mode) Serial.println("Correctly found INA219 chip");
+  }
+}
 
+void get_current(){
+  float shuntvoltage = 0;
+  float busvoltage = 0;
+  float current_mA = 0;
+  float loadvoltage = 0;
+  float power_mW = 0;
 
+  shuntvoltage = ina219.getShuntVoltage_mV();
+  busvoltage = ina219.getBusVoltage_V();
+  current_mA = ina219.getCurrent_mA();
+  power_mW = ina219.getPower_mW();
+  loadvoltage = busvoltage + (shuntvoltage / 1000);
+  
+  if(debug_mode){
+    Serial.println("------- Measuring voltage and current with INA219 -------");
+    Serial.print("Bus Voltage:   "); Serial.print(busvoltage); Serial.println(" V");
+    Serial.print("Shunt Voltage: "); Serial.print(shuntvoltage); Serial.println(" mV");
+    Serial.print("Load Voltage:  "); Serial.print(loadvoltage); Serial.println(" V");
+    Serial.print("Current:       "); Serial.print(current_mA); Serial.println(" mA");
+    Serial.print("Power:         "); Serial.print(power_mW); Serial.println(" mW");
+    Serial.println("");
+  }
 
+  delay(2000);
+}
 
