@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Wire.h>  // Enable I2C
 #include <SPI.h>   // Enable SPI
+#include <WiFi.h>
 
 #include <string.h> 
 #include <iostream>
@@ -50,6 +51,21 @@ extern const int control_pin_EC; // pin qui controle l'allumage du régulateur
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
+/* Not used for the moment
+class ConductSensor : protected Ezo_board
+{
+  public:
+    void Measure();
+    void ProbeTypeSetting();
+    void EnableParameters(bool ec, bool tds, bool s, bool sg);
+    void SendCmdAndResponse(char cmd[]);
+  
+  private:
+    uint8_t i2c_address;
+    const char* name = 0;
+};
+*/
+
 /** @brief Mesure de conductivité
   * Sends a read request to the EZO EC board and returns the measurement to the serial monitor
   * according to the parameters allowed to be returned
@@ -84,7 +100,7 @@ void setting_ec_probe_type();
   *  @param Choix_possibles : "1" = enabled
   *                           "0" = disabled
   */
-void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ); 
+void enable_ec_parameters(bool ec, bool tds, bool s, bool sg); 
   
 /** @brief Sends the command entered in parameter and returns on the serial port the answer of the sensor ec
   *  

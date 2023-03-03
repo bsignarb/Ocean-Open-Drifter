@@ -14,6 +14,8 @@ enum :byte {IDLE, DEPLOYED, RECOVERY, SENDING} state_mode; // State machine to s
 void setup() {
   Serial.begin(115200);              // For serial monitor
 
+  pinMode(LED_BUILTIN, OUTPUT); 
+
   pinMode(control_pin_EC, OUTPUT);   // initiate on Atlas EC
   digitalWrite(control_pin_EC, HIGH);
 
@@ -30,7 +32,8 @@ void setup() {
 
   state_mode = DEPLOYED;             // Init state machine to deployed mode
 
-  init_ina219();                     // Init INA219 (current sensor)
+  //init_ina219();                     // Init INA219 (current sensor)
+  WiFi.disconnect();
  
 }
 
@@ -44,20 +47,21 @@ void loop() {
   }
 
   switch(state_mode){
-    case IDLE :          // Waiting state
-
+    case IDLE :          // Waiting state : pass in DEPLOYED mode as soon as the GPS has found its position
+      deployed_cycle();  
       break;
 
     case DEPLOYED :      // Standard acquisition cycle
       deployed_cycle();
-      Serial.println("Mesures capteur ec allumé : ");
-      get_current();   
+      //get_current();   
       //scanner_i2c_adress(); 
-      all_sleep();       // Sleeping mode
+      /*all_sleep();       // Sleeping mode
       Serial.println("Mesures capteur ec en veille : ");
       get_current(); 
       delay(3000);       // Wait for 3 seconds before next acquisition (in ms)
-      all_wakeup();      // Waking up
+      all_wakeup(); */     // Waking up
+
+      delay(2000); 
 
       // TODO Condition pour passer en mode RECOVERY
       // TODO Condition pour passer en mode SENDING

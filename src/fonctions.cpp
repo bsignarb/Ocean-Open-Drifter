@@ -10,11 +10,11 @@ extern const int control_pin_EC = 10; // Controls the power supply of the EC ezo
 int led_mode = 1;                     // Use the LED to indicate what's going on
 int debug_mode = 1;                   // Sends information to the serial monitor
 
-#define uS_TO_S_FACTOR 1000000        // Conversion factor for micro seconds to seconds 
+#define uS_TO_S_FACTOR 1000000ULL     // Conversion factor for micro seconds to seconds 
 
 int nbrMes = 3;                       // Number of measurements to perform (then redefined by the config file)
 int bootCount = 0;                    // Useful to have a 1st cycle of writing in file different from the following cycles
-int TIME_TO_SLEEP = 0;
+int TIME_TO_SLEEP = 5;               // Duration between each cycle (deep sleep and wakeup)
 
 /*---------- Carte Atlas EC EZO ----------*/
 #define ecAddress 100                 // Board address definition for I2C communication
@@ -48,13 +48,16 @@ float fast_temp;
 HardwareSerial neogps(1);             // Instance creation for GPS module
 TinyGPSPlus gps;                      // Object creation from TinyGPSPlus class
 
-float lattitude, longitude, altitude, vitesse;
+//float lattitude, longitude, altitude, vitesse;
+double lattitude, longitude, altitude, vitesse;
 int nb_satellites;
-String coord;                                                                          // For GPS position format in 1 writing (coord = "Lattitude,Longitude")
 
 String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;                 // For date format in several variables
 String datenum_gps;                                                                    // For date format in 1 writing (datenum = "day/month/year")
 String datetime_gps;                                                                   // For date format in 1 writing  (datetime = "hour:minute:second")
+
+std::string lat;
+std::string lng;
 
 /*---------- SD card and config file ----------*/
 String datachain = "";                                                                 // Data string for storing the measured parameters
@@ -148,20 +151,24 @@ void led_blinkled(int nbr, int freq) {   // freq en sec = freq interval between 
 
 void all_sleep(){
   if(debug_mode) Serial.println("\n--- All sleep ---\n");
-  //digitalWrite(greenled, LOW);
+  digitalWrite(LED_BUILTIN, LOW);        // Turn off and keep off the built-in led during deep sleep
+  gpio_hold_en(GPIO_NUM_2); 
   //send_ec_cmd_and_response("L,0");     // EC sensor led off
   send_ec_cmd_and_response("Sleep");     // Command line to put ec sensor in sleeping mode
   delay(500); 
-  //digitalWrite(control_pin_EC, LOW);   // Switch off power supply
+  digitalWrite(control_pin_EC, LOW);     // Switch off power supply
   neogps.println("$PMTK161,0*28");       // Command line to put GPS in sleeping mode
+
+  //esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR); // Set deep sleep duration
+  //esp_deep_sleep_start();                // Switch to deep sleep mode
   delay(500);                       
 }
 
 void all_wakeup(){
   if(debug_mode) Serial.println("\n--- All wake up ---\n");
-  //digitalWrite(greenled, HIGH);
-  //digitalWrite(control_pin_EC, HIGH); // Switch on power supply
-  send_ec_cmd_and_response("Sleep");    // Sending any command to wake up ec sensor
+  digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(control_pin_EC, HIGH);   // Switch on power supply
+  //send_ec_cmd_and_response("Sleep");    // Sending any command to wake up ec sensor
   delay(500);    
   //send_ec_cmd_and_response("L,1");    // EC sensor led on
   neogps.println("a");                  // Sending any character to wake up gps
@@ -179,6 +186,7 @@ void recovery_cycle(){
 }
 
 /* ---------- Functions related to Atlas EC EZO sensor ----------*/
+
 void mesureEC(){
   EC.send_read_cmd(); // Sends a read request to the sensor
   delay(1000);
@@ -449,23 +457,26 @@ void print_coord_gps()
 {     
   if (gps.location.isValid() == 1)
   {
-    lattitude = gps.location.lat();
+    lattitude = gps.location.lat(); 
     longitude = gps.location.lng();
     nb_satellites = gps.satellites.value();
     altitude = gps.altitude.meters();
     vitesse = gps.speed.kmph();
 
-    // Concatenation in coord to facilitate processing on datachain (coord = "Lattitude,Longitude")
-    coord = "(Lat)";   
-    coord += lattitude; 
-    coord += ",(Long)";
-    coord += longitude; 
+    std::stringstream stream_lat;
+    std::stringstream stream_lng;
+    stream_lat << std::fixed << std::setprecision(5) << lattitude; // Set lattitude precision to 5 digits (2 as default in char variable)
+    stream_lng << std::fixed << std::setprecision(5) << longitude; // Set longitude precision to 5 digits (2 as default in char variable)
+    lat = stream_lat.str();
+    lng = stream_lng.str();
 
     if(debug_mode){
       Serial.print("Donnees GPS : ");
       
-      Serial.print(coord);
-      
+      Serial.print("lattitude : ");
+      Serial.print(&(lat[0]));        // Pass from std string to char value (to make it easier to display)
+      Serial.print(" longitude : ");
+      Serial.print(&(lng[0]));        // Pass from std string to char value (to make it easier to display)
       Serial.print(" | Nombre de satellites : ");
       Serial.print(nb_satellites);
 
@@ -621,16 +632,17 @@ void mesure_cycle_to_datachain(){
 
   // Reads the sensors several times and adds their values to datachain
   for(int n=1; n<=nbrMes; n++){
-    if(debug_mode){Serial.print("--- Mesure n° : "); Serial.print(n); Serial.print("/");Serial.println(nbrMes);}
+    if(debug_mode){Serial.print("--- Measure n° : "); Serial.print(n); Serial.print("/");Serial.println(nbrMes);}
 
     mesureEC();           // Atlas ec ezo sensor measure
     mesure_temp();        // Temperature sensor measure
     scanning_gps_coord(); // Gps coordinates acquisition
     if(debug_mode) Serial.println("");
 
-    datachain += " | ";  
-    datachain += coord; datachain += " ; ";       // Writte coordinates in datachain
-    datachain += fast_temp; datachain += "°C ; "; // Writte temperature in datachain
+    datachain += " | (lat)";  
+    datachain += &(lat[0]); datachain += " , (long)";     // Writte lattitude in datachain
+    datachain += &(lng[0]); datachain += " ; ";     // Writte longitude in datachain
+    datachain += fast_temp; datachain += "°C ; ";   // Writte temperature in datachain
     
     // Writing ec ezo unity according to the enabled parameters
     if (EC_ENABLED){ 
@@ -649,7 +661,7 @@ void mesure_cycle_to_datachain(){
 
   // Display datachain on terminal
   if (debug_mode==1) {
-    Serial.print("Datachain complétée : "); 
+    Serial.print("Datachain completed : "); 
     Serial.println(datachain);
     Serial.println();
   }
@@ -671,6 +683,7 @@ void save_datachain_to_sd(){
   }
   delay(400);
 }
+
 
 /* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
 void reading_rtc() {                         
@@ -760,13 +773,13 @@ void set_rtc_by_gps(){
 
 int check_rtc_set()
 {
-  if(Clock.getYear() < 2010)
+  if(Clock.getYear() != 23)  // If year < 2010 (only the 2 last digits are taken in account)
   {
-    rtc_set = false;
+    rtc_set = false;        // RTC is not correctly set
     Serial.println("RTC time not set\n");
     return 0;
   }else{
-    rtc_set = true;
+    rtc_set = true;         // RTC has been set
     Serial.println("RTC time set\n");
     return 1;
   }
