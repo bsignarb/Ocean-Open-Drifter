@@ -18,11 +18,13 @@
 #include <SD.h>      // SD card
 #include <DS3231.h>  // RTC clock
 
-//#include <SoftwareSerial.h>
+#include <SoftwareSerial.h>
 #include <HardwareSerial.h>
 #include <TinyGPS++.h>
 
-#include <Adafruit_INA219.h> // Voltage and current sensor
+//#include <Adafruit_INA219.h> // Voltage and current sensor
+
+#include <IridiumSBD.h>
 
 /* ---------- Definition of constants ----------*/
 #define VBATT_PIN A0 // Pin for battery voltage control
@@ -35,9 +37,9 @@
 *  See function void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
 *  For the moment only 1 possible parameter at a time 
 */
-#define EC_ENABLED 0
+#define EC_ENABLED 1
 #define TDS_ENABLED 0
-#define SAL_ENABLED 1
+#define SAL_ENABLED 0
 #define SG_ENABLED 0
 
 /* Not used at the moment
@@ -46,8 +48,6 @@ extern char salData[48];
 extern char tdsData[48];
 extern char sgData[48];
 */
-
-extern const int control_pin_EC; // pin qui controle l'allumage du régulateur
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
@@ -65,6 +65,9 @@ class ConductSensor : protected Ezo_board
     const char* name = 0;
 };
 */
+
+/** Initiate Atlas EC conductivity sensor */
+void initEC();
 
 /** @brief Mesure de conductivité
   * Sends a read request to the EZO EC board and returns the measurement to the serial monitor
@@ -209,6 +212,11 @@ int check_rtc_set();
 void init_ina219();
 void get_current();  
 
+/* ---------- Functions related to Iridium Rockblock 9603 ----------*/
+void init_iridium();
+void send_text_iridium();
+void send_binary_iridium();
+
 /* ---------- Fonctions annexes ----------*/
 
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
@@ -229,10 +237,19 @@ void all_sleep();
 /** @brief General wake up */  
 void all_wakeup();
 
+void charToBinaryArray(char c, int *binary_array);
+
+
+
+void init_cycle();
+
 /** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
 void deployed_cycle();
 
 void recovery_cycle();
+
+void test_cycle_init();
+void test_cycle();
 
 
   

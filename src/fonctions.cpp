@@ -4,8 +4,9 @@ using namespace std;
 /* ------------------------------------------------- DECLARATIONS ------------------------------------------------------------------*/
 
 /*---------- General declarations ----------*/ 
-const int greenled = 25;              // Information led 
-extern const int control_pin_EC = 10; // Controls the power supply of the EC ezo sensor
+//const int greenled = 35;              // Information led 
+//const int yellowled = 34;              // Information led 
+//const int redled = 39;              // Information led
 
 int led_mode = 1;                     // Use the LED to indicate what's going on
 int debug_mode = 1;                   // Sends information to the serial monitor
@@ -22,6 +23,8 @@ int ecDelay = 300;                    // Delays definition
 int ecDelay2 = 600;
 
 Ezo_board EC = Ezo_board(100, "EC");  // EC object creation of the Ezo_board class with address 100
+
+const int commut_EC = 4; // Controls the power supply of the EC ezo sensor
 
 float conductivity, total_dissolved_solids, salinity, seawater_gravity;
 
@@ -43,10 +46,13 @@ TSYS01 sensor_fastTemp;               // Bluerobotics temperature sensor declara
 float fast_temp;
 
 /*---------- Grove GPS v1.2 + atomic clock ----------*/
-#define RXD 25                        // UART ports declaration for communication with GPS
-#define TXD 26 
-HardwareSerial neogps(1);             // Instance creation for GPS module
-TinyGPSPlus gps;                      // Object creation from TinyGPSPlus class
+#define RXD_GPS 26                        // UART ports declaration for communication with GPS
+#define TXD_GPS 27
+//HardwareSerial neogps(1);               // Instance creation for GPS module (Hardware version)
+SoftwareSerial neogps(RXD_GPS, TXD_GPS);  // Instance creation for GPS module (Software version)   
+TinyGPSPlus gps;                          // Object creation from TinyGPSPlus class
+
+const int commut_gps = 9;                 // GPS power switching 
 
 //float lattitude, longitude, altitude, vitesse;
 double lattitude, longitude, altitude, vitesse;
@@ -61,7 +67,11 @@ std::string lng;
 
 /*---------- SD card and config file ----------*/
 String datachain = "";                                                                 // Data string for storing the measured parameters
-const int cspin_SD=5;                                                                  // SPI bus selection signal
+char outBuffer[60]; 
+String outBuffer_string;
+byte outBuffer_byte[55];
+
+const int cspin_SD=15;                                                                 // SPI bus selection signal
 String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
 File confFile;                                                                         // To read the config.txt file
 
@@ -82,7 +92,19 @@ String datetime_rtc;
 bool rtc_set = false;                                                   // To know if the RTC has been correctly initialized
 
 /*---------- INA219 current sensor Adafruit ----------*/
-Adafruit_INA219 ina219;
+//Adafruit_INA219 ina219;
+
+/*---------- IridiumSBD Rockblock 9603 ----------*/
+#define RXD_IRID 10                        // UART ports declaration for communication with Rockblock
+#define TXD_IRID 5
+
+//SoftwareSerial ssIridium(5, 10);  // RockBLOCK serial port on 10 5 (Software version)
+HardwareSerial ssIridium(1);        // RockBLOCK serial port on 10 5 (Hardware version)
+IridiumSBD modem(ssIridium, 2);     // RockBLOCK Object creation with SLEEP pin on 2
+
+int signalQuality = -1;
+int err;
+char version[12];
 
 /* ------------------------------------------------- FONCTIONS ------------------------------------------------------------------*/
 
@@ -118,7 +140,7 @@ float get_voltage(){
 void scanner_i2c_adress()
 {
   Serial.println();
-  Serial.println("I2C scanner. Scanning ...");
+  Serial.println("I2C scanner. Scanning ...\n");
   byte count = 0;
 
   Wire.begin();
@@ -137,14 +159,14 @@ void scanner_i2c_adress()
   }
   Serial.print ("Found ");      
   Serial.print (count, DEC);        // numbers of devices
-  Serial.println (" device(s).");
+  Serial.println (" device(s).\n");
 }
 
 void led_blinkled(int nbr, int freq) {   // freq en sec = freq interval between to light on
   for (int i=0; i<nbr; i++) {
-    digitalWrite(greenled, HIGH); 
+    //digitalWrite(greenled, HIGH); 
     delay(freq/2);
-    digitalWrite(greenled, LOW);
+    //digitalWrite(greenled, LOW);
     delay(freq/2);
   }
 }
@@ -156,7 +178,7 @@ void all_sleep(){
   //send_ec_cmd_and_response("L,0");     // EC sensor led off
   send_ec_cmd_and_response("Sleep");     // Command line to put ec sensor in sleeping mode
   delay(500); 
-  digitalWrite(control_pin_EC, LOW);     // Switch off power supply
+  digitalWrite(commut_EC, LOW);     // Switch off power supply
   neogps.println("$PMTK161,0*28");       // Command line to put GPS in sleeping mode
 
   //esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR); // Set deep sleep duration
@@ -167,7 +189,7 @@ void all_sleep(){
 void all_wakeup(){
   if(debug_mode) Serial.println("\n--- All wake up ---\n");
   digitalWrite(LED_BUILTIN, HIGH);
-  digitalWrite(control_pin_EC, HIGH);   // Switch on power supply
+  digitalWrite(commut_EC, HIGH);   // Switch on power supply
   //send_ec_cmd_and_response("Sleep");    // Sending any command to wake up ec sensor
   delay(500);    
   //send_ec_cmd_and_response("L,1");    // EC sensor led on
@@ -175,17 +197,18 @@ void all_wakeup(){
   delay(500);   
 }
 
-void deployed_cycle(){
-  mesure_cycle_to_datachain(); // Starts a measurement cycle and stores the measured parameters in datachain
-  save_datachain_to_sd();      // Writes the content of datachain to the dataFilename file on the SD card
-}
-
-void recovery_cycle(){
-  mesure_cycle_to_datachain(); // Starts a measurement cycle and stores the measured parameters in datachain
-  save_datachain_to_sd();      // Writes the content of datachain to the dataFilename file on the SD card
+void charToBinaryArray(char c, int *binary_array) 
+{
+  for(int i = 0; i < 8; i++) {
+    binary_array[7-i] = c & (1 << i);
+  }
 }
 
 /* ---------- Functions related to Atlas EC EZO sensor ----------*/
+void initEC(){
+  pinMode(commut_EC, OUTPUT);   // Switch on power supply of the EC ezo sensor
+  digitalWrite(commut_EC, HIGH);
+}
 
 void mesureEC(){
   EC.send_read_cmd(); // Sends a read request to the sensor
@@ -402,7 +425,11 @@ void mesure_temp(){
 
 /* ---------- Functions related to Grove GPS v1.2 + atomic clock related functions ----------*/
 void init_gps(){
-  neogps.begin(9600, SERIAL_8N1, RXD, TXD); // begin GPS hardware serial
+  //neogps.begin(9600, SERIAL_8N1, RXD, TXD); // begin GPS hardware serial
+  neogps.begin(9600);                         // begin GPS software serial
+
+  pinMode(commut_gps, OUTPUT); 
+  digitalWrite(commut_gps, HIGH);
 }
 
 void scanning_gps_time(){
@@ -465,8 +492,8 @@ void print_coord_gps()
 
     std::stringstream stream_lat;
     std::stringstream stream_lng;
-    stream_lat << std::fixed << std::setprecision(5) << lattitude; // Set lattitude precision to 5 digits (2 as default in char variable)
-    stream_lng << std::fixed << std::setprecision(5) << longitude; // Set longitude precision to 5 digits (2 as default in char variable)
+    stream_lat << std::fixed << std::setprecision(6) << lattitude; // Set lattitude precision to 6 digits (2 as default in char variable)
+    stream_lng << std::fixed << std::setprecision(6) << longitude; // Set longitude precision to 6 digits (2 as default in char variable)
     lat = stream_lat.str();
     lng = stream_lng.str();
 
@@ -557,9 +584,9 @@ void test_sd(){
 
 void errormessage_sd(){
   for (int i=0; i <= 8; i++){                   
-      digitalWrite(greenled, HIGH); delay(400);
+      //digitalWrite(greenled, HIGH); delay(400);
       //led_blinked(3,100);
-      digitalWrite(greenled, LOW); delay (300);
+      //digitalWrite(greenled, LOW); delay (300);
   }
 }
 
@@ -657,12 +684,51 @@ void mesure_cycle_to_datachain(){
     else if (SG_ENABLED){
       datachain += seawater_gravity;
     }
+
+    // outBuffer for Iridum sending  (avec caracteres mise en forme)
+    /*sprintf(outBuffer, "%02d/%02d/%d,%02d:%02d:%02d,%0.6lf,%0.6lf,%0.2f,%0.2f", 
+      gps.date.day(), 
+      gps.date.month(),
+      gps.date.year(), 
+      gps.time.hour()+2, 
+      gps.time.minute(), 
+      gps.time.second(),
+      gps.location.lat(),
+      gps.location.lng(),
+      conductivity,
+      fast_temp);*/
+
+    // outBuffer for Iridum sending  (trame brute)
+    sprintf(outBuffer, "%02d%02d%d%02d%02d%02d%0.6lf%0.6lf%0.2f%0.2f", 
+      gps.date.day(), 
+      gps.date.month(),
+      gps.date.year(), 
+      gps.time.hour()+2, 
+      gps.time.minute(), 
+      gps.time.second(),
+      gps.location.lat(),
+      gps.location.lng(),
+      conductivity,
+      fast_temp);
+
+    outBuffer_string = outBuffer; // Char to string
+
+    // String to binary
+    Serial.print("Length buffer : ");
+    Serial.println(outBuffer_string.length() + 1);
+    outBuffer_string.getBytes(outBuffer_byte, outBuffer_string.length() + 1);
+    Serial.println("Binary outBuffer : "); 
+    for (int i = 0; i < outBuffer_string.length() + 1; i++){
+      Serial.print(outBuffer_byte[i], BIN);
+      Serial.print(" ");
+    }
+    Serial.println('\n');  
   }
 
-  // Display datachain on terminal
+  // Display datachain and outbuffer on terminal
   if (debug_mode==1) {
-    Serial.print("Datachain completed : "); 
-    Serial.println(datachain);
+    Serial.print("outBuffer completed : "); 
+    Serial.println(outBuffer);
     Serial.println();
   }
 }
@@ -670,7 +736,7 @@ void mesure_cycle_to_datachain(){
 void save_datachain_to_sd(){
   File dataFile = SD.open(dataFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
   if (dataFile) {                                        // If file available, writes the content of the datachain to the file
-    dataFile.println(datachain);
+    dataFile.println(outBuffer);
     dataFile.close();
     if (debug_mode==1) Serial.println("Fichier cree avec succes");
     if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
@@ -683,7 +749,6 @@ void save_datachain_to_sd(){
   }
   delay(400);
 }
-
 
 /* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
 void reading_rtc() {                         
@@ -785,7 +850,7 @@ int check_rtc_set()
   }
 }
 
-/* ---------- Functions related to INA219 current sensor ----------*/
+/* ---------- Functions related to INA219 current sensor ----------
 void init_ina219(){
   if (! ina219.begin()) {
     if(debug_mode) Serial.println("Failed to find INA219 chip");
@@ -820,4 +885,148 @@ void get_current(){
 
   delay(2000);
 }
+*/
 
+/* ---------- Functions related to Iridium Rockblock 9603 ----------*/
+void init_iridium(){
+
+  pinMode(2, OUTPUT); 
+  digitalWrite(2, LOW);
+
+  //modem.setPowerProfile(1);                  // This is a low power application
+  //ssIridium.begin(19200);                    // Start the serial port connected to the satellite modem (Software version)
+  ssIridium.begin(19200, SERIAL_8N1, 10, 5);   // Start the serial port connected to the satellite modem (Hardware version)
+
+  modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+
+  // Begin satellite modem operation
+  Serial.println("Starting modem...");
+  err = modem.begin();          // Wake up the modem and prepare it to communicate.
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("Begin failed: error ");
+    Serial.println(err);
+    if (err == ISBD_NO_MODEM_DETECTED)
+      Serial.println("No modem detected: check wiring.");
+    return;
+  }
+  else Serial.println("Modem well initialised");
+}
+
+void send_text_iridium(){
+  // Example: Print the firmware revision
+  err = modem.getFirmwareVersion(version, sizeof(version));
+  if (err != ISBD_SUCCESS)
+  {
+     Serial.print("FirmwareVersion failed: error ");
+     Serial.println(err);
+     return;
+  }
+  Serial.print("Firmware Version is ");
+  Serial.print(version);
+  Serial.println(".");
+
+  // Example: Test the signal quality.
+  // This returns a number between 0 and 5.
+  // 2 or better is preferred.
+  err = modem.getSignalQuality(signalQuality);
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("SignalQuality failed: error ");
+    Serial.println(err);
+    return;
+  }
+
+  Serial.print("On a scale of 0 to 5, signal quality is currently ");
+  Serial.print(signalQuality);
+  Serial.println(".");
+
+  int err = modem.sendSBDText(outBuffer);
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("Transmission failed with error code ");
+    Serial.println(err);
+  }
+  else Serial.println("outBuffer sending Ok");
+
+  // Send the message
+  /*Serial.print("Trying to send the message.  This might take several minutes.\r\n");
+  err = modem.sendSBDText("Test OOD v1.0");
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("sendSBDText failed: error ");
+    Serial.println(err);
+    if (err == ISBD_SENDRECEIVE_TIMEOUT)
+      Serial.println("Try again with a better view of the sky.");
+  }
+
+  else
+  {
+    Serial.println("Hey, it worked!");
+  }*/
+
+  #if DIAGNOSTICS
+void ISBDConsoleCallback(IridiumSBD *device, char c)
+{
+  //Serial.write(c);
+}
+
+void ISBDDiagsCallback(IridiumSBD *device, char c)
+{
+  //Serial.write(c);
+}
+#endif
+}
+
+void send_binary_iridium(){
+  // Example: Test the signal quality.
+  // This returns a number between 0 and 5.
+  // 2 or better is preferred.
+  err = modem.getSignalQuality(signalQuality);
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("SignalQuality failed: error ");
+    Serial.println(err);
+    return;
+  }
+
+  Serial.print("On a scale of 0 to 5, signal quality is currently ");
+  Serial.print(signalQuality);
+  Serial.println(".");
+
+  int err = modem.sendSBDBinary(outBuffer_byte, 55);
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("Transmission failed with error code ");
+    Serial.println(err);
+  }
+  else Serial.println("outBuffer sending Ok");
+
+  // Send the message
+  /*Serial.print("Trying to send the message.  This might take several minutes.\r\n");
+  err = modem.sendSBDText("Test OOD v1.0");
+  if (err != ISBD_SUCCESS)
+  {
+    Serial.print("sendSBDText failed: error ");
+    Serial.println(err);
+    if (err == ISBD_SENDRECEIVE_TIMEOUT)
+      Serial.println("Try again with a better view of the sky.");
+  }
+
+  else
+  {
+    Serial.println("Hey, it worked!");
+  }*/
+
+  #if DIAGNOSTICS
+void ISBDConsoleCallback(IridiumSBD *device, char c)
+{
+  //Serial.write(c);
+}
+
+void ISBDDiagsCallback(IridiumSBD *device, char c)
+{
+  //Serial.write(c);
+}
+#endif
+}
