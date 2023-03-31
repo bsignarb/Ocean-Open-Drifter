@@ -10,6 +10,8 @@
 #include <string.h> 
 #include <iostream>
 #include <bits/stdc++.h>
+#include <stdlib.h>
+#include <fstream>
 
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
 #include <Ezo_i2c_util.h> // brings in common print statements
@@ -25,6 +27,8 @@
 //#include <Adafruit_INA219.h> // Voltage and current sensor
 
 #include <IridiumSBD.h>
+
+using namespace std;
 
 /* ---------- Definition of constants ----------*/
 #define VBATT_PIN A0 // Pin for battery voltage control
@@ -160,7 +164,7 @@ void print_date_gps();
 /* ---------- Functions related to the SD card and the config file ----------*/
 
 /** @brief Initializes and tests the SD card */
-void test_sd();
+void init_sd();
 
 /** @brief Flashes the LED to indicate an SD card error */  
 void errormessage_sd();
@@ -176,6 +180,9 @@ void mesure_cycle_to_datachain();
 
 /** @brief Writes the content of datachain to the dataFilename file on the SD card */  
 void save_datachain_to_sd();
+
+void readSDbinary_to_struct();
+
   
 /* ---------- Functions related to the RTC DS3231 Adafruit ----------*/
 

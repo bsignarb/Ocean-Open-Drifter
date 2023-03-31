@@ -71,12 +71,49 @@ char outBuffer[60];
 String outBuffer_string;
 byte outBuffer_byte[55];
 
+int reading_pos = 0;
+
+/*typedef union {
+    struct {
+      uint8_t d;
+      uint8_t mth;
+      uint16_t y;
+      uint8_t h;
+      uint8_t min;
+      uint8_t s;
+      float lat;
+      float lng;
+      float cond;
+      float temp;
+    } dataframe;
+} Test;*/
+
+typedef struct dataframe
+{
+  uint8_t d;
+  uint8_t mth;
+  uint16_t y;
+  uint8_t h;
+  uint8_t min;
+  uint8_t s;
+  float lat;
+  float lng;
+  float cond;
+  float temp;
+};
+
+dataframe dataframe_write;
+dataframe dataframe_read;
+
+uint8_t buffer_read[sizeof(dataframe_read)];
+
 const int cspin_SD=15;                                                                 // SPI bus selection signal
 String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
 File confFile;                                                                         // To read the config.txt file
 
 String fichier_config = "/config.txt";                                                 // Name of the configuration file
 String dataFilename = "/datalog.txt";                                                  // Data file name
+String binFilename = "/binfile.bin";
 
 /*---------- RTC DS3231 Adafruit ----------*/
 DS3231 Clock;                                                           // Object creation from DS3231 class
@@ -570,7 +607,7 @@ void print_date_gps(){
 }
 
 /* ---------- Functions related to the SD card and the config file ----------*/
-void test_sd(){
+void init_sd(){
   if (debug_mode) Serial.print("Initializing SD card... : ");   
   if (!SD.begin(cspin_SD)) {                                           // Checks that the SD card is present and can be initialized (pin 5 by default)            
     if (debug_mode) Serial.println("Card failed, or not present");
@@ -580,6 +617,10 @@ void test_sd(){
   }
   if (debug_mode) Serial.println("card initialized.");  
   delay(300);  
+
+  // Allows to resume the reading of the binary file at the last frame written at each reboot of the card
+  File binFile = SD.open(binFilename, FILE_READ);
+  reading_pos = binFile.size();
 }
 
 void errormessage_sd(){
@@ -715,7 +756,9 @@ void mesure_cycle_to_datachain(){
 
     // String to binary
     Serial.print("Length buffer : ");
-    Serial.println(outBuffer_string.length() + 1);
+    Serial.println(outBuffer_string.length());
+    Serial.print("Length dataframe : ");
+    Serial.println(sizeof(dataframe_write));
     outBuffer_string.getBytes(outBuffer_byte, outBuffer_string.length() + 1);
     Serial.println("Binary outBuffer : "); 
     for (int i = 0; i < outBuffer_string.length() + 1; i++){
@@ -731,24 +774,113 @@ void mesure_cycle_to_datachain(){
     Serial.println(outBuffer);
     Serial.println();
   }
+
+  // WiFilling dataframe structure
+  dataframe_write.d = gps.date.day();
+  dataframe_write.mth = gps.date.month();
+  dataframe_write.y = gps.date.year();
+  dataframe_write.h = gps.time.hour()+2;
+  dataframe_write.min = gps.time.minute();
+  dataframe_write.s = gps.time.second();
+  dataframe_write.lat = gps.location.lat();
+  dataframe_write.lng = gps.location.lng();
+  dataframe_write.cond = conductivity;
+  dataframe_write.temp = fast_temp;
+
 }
 
 void save_datachain_to_sd(){
+  // Text format
   File dataFile = SD.open(dataFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
   if (dataFile) {                                        // If file available, writes the content of the datachain to the file
     dataFile.println(outBuffer);
+    dataFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));
+    dataFile.println(" ");
     dataFile.close();
-    if (debug_mode==1) Serial.println("Fichier cree avec succes");
+    if (debug_mode==1) Serial.println("Textfile created succesfully");
     if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
   }
   else {                                                 // If file not opened, display error
-    if (debug_mode==1) Serial.println("error opening file");
+    if (debug_mode==1) Serial.println("error opening txt file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
     }
   }
+
+  // Binary format
+  File binFile = SD.open(binFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
+  if (binFile) {                                       // If file available, writes the content of the datachain to the file
+    binFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));
+    delay(50);
+    binFile.close();
+    if (debug_mode==1) Serial.println("Binary file created succesfully");
+    if (debug_mode==1) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
+  }
+  else {                                                 // If file not opened, display error
+    if (debug_mode==1) Serial.println("error opening binary file");
+    for (int i=0; i<=5; i++){
+        errormessage_sd();
+    }
+  }
+
+
+
+
+  /*DataFrame testframe = {29, 03, 2023, 15, 10, 42, 48.35, -4.56, 97280, 19.23};
+  ofstream outfile;
+  outfile.open("binfile.bin", ios::binary | ios::out);
+
+  if (outfile) {                                        // If file available, writes the content of the datachain to the file
+    outfile.write((char*)&testframe, sizeof(testframe));
+    outfile.close();
+    if (debug_mode==1) Serial.println("Fichier bin cree avec succes");
+    if (debug_mode==1) {Serial.print("Filename : "); Serial.println("binfile.bin"); Serial.println();}
+  }
+  else {                                                 // If file not opened, display error
+    if (debug_mode==1) Serial.println("error opening bin file");
+    for (int i=0; i<=5; i++){
+        errormessage_sd();
+    }
+  }*/
+
   delay(400);
 }
+
+void readSDbinary_to_struct(){
+  uint8_t buffer[sizeof(dataframe_read)];
+  
+
+  File binFile = SD.open(binFilename, FILE_READ);
+  if (binFile.available()) {
+        binFile.seek(reading_pos);
+        binFile.read((uint8_t *)&dataframe_read, sizeof(dataframe_read));
+        memcpy(buffer_read, &dataframe_read, sizeof(dataframe_read));
+        if(debug_mode){
+          Serial.print("dataframe_read sample : ");
+          Serial.print(dataframe_read.h);
+          Serial.print(":");
+          Serial.println(dataframe_read.min);
+          Serial.print(":");
+          Serial.println(dataframe_read.s);
+          Serial.println(dataframe_read.temp);
+          Serial.print("dataframe_read size : ");
+          Serial.println(sizeof(dataframe_read));
+          Serial.print("buffer_read size : ");
+          Serial.println(sizeof(buffer_read));
+        }
+        reading_pos += sizeof(dataframe_read);
+        delay(50);
+
+        
+    }
+    else {                                                 // If file not opened, display error
+    if (debug_mode) Serial.println("error opening reading binary file");
+    for (int i=0; i<=5; i++){
+        errormessage_sd();
+    }
+  }
+}
+
 
 /* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
 void reading_rtc() {                         
@@ -994,7 +1126,8 @@ void send_binary_iridium(){
   Serial.print(signalQuality);
   Serial.println(".");
 
-  int err = modem.sendSBDBinary(outBuffer_byte, 55);
+  //int err = modem.sendSBDBinary(outBuffer_byte, 55);
+  int err = modem.sendSBDBinary(buffer_read, sizeof(buffer_read));
   if (err != ISBD_SUCCESS)
   {
     Serial.print("Transmission failed with error code ");

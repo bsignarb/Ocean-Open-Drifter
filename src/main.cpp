@@ -98,7 +98,7 @@ void init_cycle(){
   Wire.begin();   
   sensor_fastTemp.init();  // Init temperature sensor
   init_gps();              // Init communication UART of GPS
-  test_sd();               // Init and test SD card
+  init_sd();               // Init and test SD card
   lecture_config();        // Read config file
   refresh_config_values(); // Refreshes the program values according to those read in the config file
 
@@ -123,11 +123,13 @@ void deployed_cycle(){
   //digitalWrite(4, HIGH);       //EC sensor ON
   mesure_cycle_to_datachain();   // Starts a measurement cycle and stores the measured parameters in datachain
   save_datachain_to_sd();        // Writes the content of datachain to the dataFilename file on the SD card
+  readSDbinary_to_struct();
 
   //send_binary_iridium();
+  //send_text_iridium();
   
 
-  delay(3000);                   // 3 seconds delay
+  delay(10000);                   // 3 seconds delay
 
   
 
