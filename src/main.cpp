@@ -92,80 +92,64 @@ void init_cycle(){
   // TODO differencier 2 parties de l'init : 
   // l'une qui ne se réalise qu'une seule fois au démarrage 
   // et l'autre dans laquelle on peut revenir apres coup pour mise en veille si pas de gps sur certaine durée ou MàJ RTC...
+
   pinMode(LED_BUILTIN, OUTPUT); 
-  initEC();                // For I2C communication 
+  initEC();                // Init conductivity sensor
   delay(50);
-  Wire.begin();   
+  Wire.begin();            // For I2C communication 
   sensor_fastTemp.init();  // Init temperature sensor
   init_gps();              // Init communication UART of GPS
   init_sd();               // Init and test SD card
   lecture_config();        // Read config file
-  refresh_config_values(); // Refreshes the program values according to those read in the config file
+  refresh_config_values(); // Refresh program values according to those read in config file
+  init_iridium();          // Init Iridium module
 
   //pinMode(2, OUTPUT);    // Sleep Iridium modem
   //digitalWrite(2, LOW);
 
   //init_ina219();         // Init INA219 (current sensor)
 
-  if(!check_rtc_set()){    // if RTC not correctly initialized
+  if(!check_rtc_set()){    // If RTC not correctly initialized
     set_rtc_by_gps();      // RTC update via gps data
   }
-
-  init_iridium();
 
   // TODO veille si pas de signal GPS
 }
 
 void deployed_cycle(){
   //Serial.println("--- EC sensor and gps ON ---");
-  //scanner_i2c_adress();
   //digitalWrite(9, HIGH);       // GPS ON
-  //digitalWrite(4, HIGH);       //EC sensor ON
+  //digitalWrite(4, HIGH);       // EC sensor ON
+
+  //--- Datalogging ---//
   mesure_cycle_to_datachain();   // Starts a measurement cycle and stores the measured parameters in datachain
   save_datachain_to_sd();        // Writes the content of datachain to the dataFilename file on the SD card
-  readSDbinary_to_struct();
+  readSDbinary_to_struct();      // Read datalog file in a dataframe_read structure for Iridium sending
 
+  //--- Iridium sending ---//
+  //print_iridium_infos();
   //send_binary_iridium();
   //send_text_iridium();
-  
 
-  delay(10000);                   // 3 seconds delay
-
-  
-
-  /*Serial.println("--- EC sensor and gps OFF ---");
-  digitalWrite(9, LOW);         // GPS OFF
-  digitalWrite(4, LOW);         //EC sensor OFF
-  mesure_cycle_to_datachain();  // Starts a measurement cycle and stores the measured parameters in datachain
-  save_datachain_to_sd();       // Writes the content of datachain to the dataFilename file on the SD card
-
-  delay(3000);                  // 3 seconds delay*/
-
-  /*if(i==0){
-    Serial.println("EC activated");
-    digitalWrite(commut_EC, HIGH);
-    delay(2000);
-    i=1;
-  }else{
-    Serial.println("EC desactivated");
-    digitalWrite(commut_EC, LOW);
-    delay(2000);
-    i=0;
-  }*/
-  
-
-  if(!check_rtc_set()){  // if RTC not correctly initialized
-    set_rtc_by_gps();    // RTC update via gps data
+  if(!check_rtc_set()){          // if RTC not correctly initialized
+    set_rtc_by_gps();            // RTC update via gps data
   }
 
-  delay(1000);                 // Wait for 1 second before next acquisition
+  delay(3000);                   // Wait for 3 seconds before next acquisition
 }
 
 void recovery_cycle(){
-  mesure_cycle_to_datachain(); // Starts a measurement cycle and stores the measured parameters in datachain
-  save_datachain_to_sd();      // Writes the content of datachain to the dataFilename file on the SD card
+  //--- Datalogging ---//
+  mesure_cycle_to_datachain();   // Starts a measurement cycle and stores the measured parameters in datachain
+  save_datachain_to_sd();        // Writes the content of datachain to the dataFilename file on the SD card
+  readSDbinary_to_struct();      // Read datalog file in a dataframe_read structure for Iridium sending
 
-  delay(500);                  // Wait for 500 ms before next acquisition 
+  //--- Iridium sending ---//
+  print_iridium_infos();
+  //send_binary_iridium();
+  //send_text_iridium();
+
+  delay(500);                   // Wait for 500 ms before next acquisition 
 }
 
 

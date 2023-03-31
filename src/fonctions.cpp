@@ -1,94 +1,60 @@
 #include "fonctions.h" // Header
-
 using namespace std;
+
 /* ------------------------------------------------- DECLARATIONS ------------------------------------------------------------------*/
 
 /*---------- General declarations ----------*/ 
-//const int greenled = 35;              // Information led 
+#define uS_TO_S_FACTOR 1000000ULL       // Conversion factor for micro seconds to seconds 
+
+//const int greenled = 35;               // Information led 
 //const int yellowled = 34;              // Information led 
-//const int redled = 39;              // Information led
-
-int led_mode = 1;                     // Use the LED to indicate what's going on
-int debug_mode = 1;                   // Sends information to the serial monitor
-
-#define uS_TO_S_FACTOR 1000000ULL     // Conversion factor for micro seconds to seconds 
-
-int nbrMes = 3;                       // Number of measurements to perform (then redefined by the config file)
-int bootCount = 0;                    // Useful to have a 1st cycle of writing in file different from the following cycles
-int TIME_TO_SLEEP = 5;               // Duration between each cycle (deep sleep and wakeup)
+//const int redled = 39;                 // Information led
+int led_mode = 1;                        // Use the LED to indicate what's going on
+int debug_mode = 1;                      // Sends information to the serial monitor
+int nbrMes = 3;                          // Number of measurements to perform (then redefined by the config file)
+int bootCount = 0;                       // Useful to have a 1st cycle of writing in file different from the following cycles
+int TIME_TO_SLEEP = 5;                   // Duration between each cycle (deep sleep and wakeup)
 
 /*---------- Carte Atlas EC EZO ----------*/
-#define ecAddress 100                 // Board address definition for I2C communication
-int ecDelay = 300;                    // Delays definition             
-int ecDelay2 = 600;
+#define ecAddress 100                    // Board address definition for I2C communication
 
-Ezo_board EC = Ezo_board(100, "EC");  // EC object creation of the Ezo_board class with address 100
-
-const int commut_EC = 4; // Controls the power supply of the EC ezo sensor
-
-float conductivity, total_dissolved_solids, salinity, seawater_gravity;
-
-/* Parameters not used for the moment
-byte ecCode = 0;                      // Used to hold the I2C response code.
-byte ecInChar = 0;                    // Used as a 1 byte buffer to store in bound bytes from the EC Circuit.
-char ecData[48];                      // We make a 48 byte character array to hold incoming data from the EC circuit.
-char salData[48];                     // We make a 48 byte character array to hold incoming data from the EC circuit.
-char tdsData[48];
-char sgData[48];
-char *ec;                             // Char pointer used in string parsing.
-char *tds;                            // Char pointer used in string parsing.
-char *sal;                            // Char pointer used in string parsing.
-char *sg;                             // Char pointer used in string parsing.
-*/
+Ezo_board EC = Ezo_board(100, "EC");     // EC object creation of the Ezo_board class with address 100
+int ecDelay = 300;                       // Delays definition       
+const int commut_EC = 4;                 // Controls power supply of the EC ezo sensor  
+float conductivity, total_dissolved_solids, salinity, seawater_gravity;    
 
 /*---------- BlueRobotics temperature sensor ----------*/
-TSYS01 sensor_fastTemp;               // Bluerobotics temperature sensor declaration
+TSYS01 sensor_fastTemp;                  // Bluerobotics temperature sensor declaration
 float fast_temp;
 
 /*---------- Grove GPS v1.2 + atomic clock ----------*/
-#define RXD_GPS 26                        // UART ports declaration for communication with GPS
+#define RXD_GPS 26                       // UART ports declaration for communication with GPS
 #define TXD_GPS 27
-//HardwareSerial neogps(1);               // Instance creation for GPS module (Hardware version)
-SoftwareSerial neogps(RXD_GPS, TXD_GPS);  // Instance creation for GPS module (Software version)   
-TinyGPSPlus gps;                          // Object creation from TinyGPSPlus class
 
-const int commut_gps = 9;                 // GPS power switching 
+//HardwareSerial neogps(1);              // Instance creation for GPS module (Hardware version)
+SoftwareSerial neogps(RXD_GPS, TXD_GPS); // Instance creation for GPS module (Software version)   
+TinyGPSPlus gps;                         // GPS object creation from TinyGPSPlus class
 
-//float lattitude, longitude, altitude, vitesse;
+const int commut_gps = 9;                // GPS power switching 
 double lattitude, longitude, altitude, vitesse;
 int nb_satellites;
-
-String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps;                 // For date format in several variables
-String datenum_gps;                                                                    // For date format in 1 writing (datenum = "day/month/year")
-String datetime_gps;                                                                   // For date format in 1 writing  (datetime = "hour:minute:second")
-
+String second_gps, minute_gps, hour_gps, day_gps, month_gps, year_gps; // For date format in several variables
+String datenum_gps;                                                    // For date format in 1 writing (datenum = "day/month/year")
+String datetime_gps;                                                   // For date format in 1 writing  (datetime = "hour:minute:second")
 std::string lat;
 std::string lng;
 
 /*---------- SD card and config file ----------*/
-String datachain = "";                                                                 // Data string for storing the measured parameters
-char outBuffer[60]; 
-String outBuffer_string;
-byte outBuffer_byte[55];
+#define FRAME_NUMBER 7    // Number of frames concatenation for sending Iridium (340 bytes max)
+
+String datachain = "";     // Data string for storing the measured parameters
+char outBuffer[60];        // To be removed shortly
+String outBuffer_string;   // To be removed shortly
+byte outBuffer_byte[55];   // To be removed shortly
 
 int reading_pos = 0;
 
-/*typedef union {
-    struct {
-      uint8_t d;
-      uint8_t mth;
-      uint16_t y;
-      uint8_t h;
-      uint8_t min;
-      uint8_t s;
-      float lat;
-      float lng;
-      float cond;
-      float temp;
-    } dataframe;
-} Test;*/
-
-typedef struct dataframe
+typedef struct dataframe   // Structure creation for data storage
 {
   uint8_t d;
   uint8_t mth;
@@ -101,18 +67,18 @@ typedef struct dataframe
   float cond;
   float temp;
 };
+dataframe dataframe_write;                                              // Structure to write data in the file
+dataframe dataframe_read;                                               // Structure to read data from the file
 
-dataframe dataframe_write;
-dataframe dataframe_read;
+uint8_t buffer_read[sizeof(dataframe_read)];                            // Binary reading file buffer for Iridium sending
+uint16_t buffer_read_340[FRAME_NUMBER*sizeof(dataframe_read)];          // Binary reading file buffer for Iridium sending (14 dataframes concatenation)
 
-uint8_t buffer_read[sizeof(dataframe_read)];
-
-const int cspin_SD=15;                                                                 // SPI bus selection signal
+const int cspin_SD=15;                                                  // SPI bus selection signal
 String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
-File confFile;                                                                         // To read the config.txt file
+File confFile;                                                          // To read the config.txt file
 
-String fichier_config = "/config.txt";                                                 // Name of the configuration file
-String dataFilename = "/datalog.txt";                                                  // Data file name
+String fichier_config = "/config.txt";                                  // Name of the configuration file
+String dataFilename = "/datalog.txt";                                   // Data file name
 String binFilename = "/binfile.bin";
 
 /*---------- RTC DS3231 Adafruit ----------*/
@@ -132,12 +98,12 @@ bool rtc_set = false;                                                   // To kn
 //Adafruit_INA219 ina219;
 
 /*---------- IridiumSBD Rockblock 9603 ----------*/
-#define RXD_IRID 10                        // UART ports declaration for communication with Rockblock
+#define RXD_IRID 10                // UART ports declaration for communication with Rockblock
 #define TXD_IRID 5
 
-//SoftwareSerial ssIridium(5, 10);  // RockBLOCK serial port on 10 5 (Software version)
-HardwareSerial ssIridium(1);        // RockBLOCK serial port on 10 5 (Hardware version)
-IridiumSBD modem(ssIridium, 2);     // RockBLOCK Object creation with SLEEP pin on 2
+//SoftwareSerial ssIridium(5, 10); // RockBLOCK serial port on 10 5 (Software version)
+HardwareSerial ssIridium(1);       // RockBLOCK serial port on 10 5 (Hardware version)
+IridiumSBD modem(ssIridium, 2);    // RockBLOCK Object creation with SLEEP pin on 2
 
 int signalQuality = -1;
 int err;
@@ -146,26 +112,6 @@ char version[12];
 /* ------------------------------------------------- FONCTIONS ------------------------------------------------------------------*/
 
 /* ---------- Auxiliary functions ----------*/
-/*SplitStr Not used for the moment
-void SplitStr(string str)
-{
-    string s = "";
-    std::cout<<"The split string is:";
-    for (auto x : str)
-    {
-        if (x == ',')
-        {
-            std::cout << s << endl;
-            s = "";
-        }
-        else {
-            s = s + x;
-        }
-    }
-    std::cout << s << endl;
-}
-*/
-
 float get_voltage(){
   float vbatt = analogRead(VBATT_PIN);
   vbatt *= 2;
@@ -232,13 +178,6 @@ void all_wakeup(){
   //send_ec_cmd_and_response("L,1");    // EC sensor led on
   neogps.println("a");                  // Sending any character to wake up gps
   delay(500);   
-}
-
-void charToBinaryArray(char c, int *binary_array) 
-{
-  for(int i = 0; i < 8; i++) {
-    binary_array[7-i] = c & (1 << i);
-  }
 }
 
 /* ---------- Functions related to Atlas EC EZO sensor ----------*/
@@ -325,128 +264,6 @@ void send_ec_cmd_and_response(char cmd[]) {
   receive_and_print_response(EC); 
   Serial.println();
 }
-
-/* Pas utilisées pour le moment, fonctions de mesure EC EZO
-void mesureEClib() {
-  if (debug_mode==1) Serial.println("--- EC Sensor :");
-  Wire.beginTransmission(ecAddress);   // Call the circuit by its ID number.
-  Wire.write('r');                     // r for reading sensor
-  Wire.endTransmission();              // End the I2C data transmission.
-  delay(ecDelay);                      // Reading time needing, 600 by default
-  Wire.requestFrom(ecAddress, 48, 1);  // Call the circuit and request 48 bytes (this is more than we need)
-  ecCode = Wire.read();                // The first byte is the response code, we read this separately.
-  byte i = 0;                          // Counter used for EC_data array.
-  while (Wire.available()) {           // Are there bytes to receive.
-    ecInChar = Wire.read();            // Receive a byte.
-    ecData[i] = ecInChar;              // Load this byte into our array.
-    i += 1;                            // Incur the counter for the array element.
-    if (ecInChar == 0) {               // If we see that we have been sent a null command.
-      i = 0;                           // Reset the counter i to 0.
-      Wire.endTransmission();          // End the I2C data transmission.
-      break;                           // Exit the while loop.
-    }
-  }
-  switch (ecCode) {                    // Switch case based on what the response code is.
-    case 1:                            // Decimal 1.
-      if (debug_mode==1) Serial.println("EC Success");    // Means the command was successful.
-      break;                           // Exits the switch case.
-    case 2:                            // Decimal 2.
-      if (debug_mode==1) Serial.println("EC Failed");     // Means the command has failed.
-      break;                           // Exits the switch case.
-    case 254:                          // Decimal 254.
-      if (debug_mode==1) Serial.println("EC Pending");    // Means the command has not yet been finished calculating.
-      break;                           // Exits the switch case.
-    case 255:                          // Decimal 255.
-      if (debug_mode==1) Serial.println("EC No Data");    // Means there is no further data to send.
-      break;                           // Exits the switch case.
-  }
-
-  //Serial.print("ECtotal value : "); Serial.println(ecData);
-
-  // ec = strtok(ecData, ",");
-  // Serial.print("EC value : "); Serial.println(ecData);
-  // tds = strtok(NULL, ",");
-  // Serial.print("TDS value : "); Serial.println(ecData);
-  // sal = strtok(NULL, ",");
-  // Serial.print("SAL value : "); Serial.println(ecData);
-  // sg = strtok(NULL, ",");    // Let's pars the string at each comma.
-  // Serial.print("SG value : "); Serial.println(ecData);
-
-  //char trame = ecData.split(',');
-
-  std::string s(ecData);
-  string str = "25,56,33 35,42";
-  SplitStr(str);
-
-  // std::string ec_string = s.substr(0, s.find(delimiter));
-  // std::string tds_string = s.substr(1, s.find(delimiter));
-  // std::string sal_string = s.substr(2, s.find(delimiter));
-  // std::string sg_string = s.substr(3, s.find(delimiter));
-  
-  // std::cout << "ec : " << ec_string << endl;
-  // std::cout << "tds: " << tds_string << endl; 
-  // std::cout << "sal: " << sal_string << endl;
-  // std::cout << "sg: " << sg_string << endl;
-
-  // ec = strtok(ecData, ",");
-  // tds = strtok(ecData, ",");
-  // sal = strtok(ecData, ",");
-  // sg = strtok(ecData, ",");    // Let's pars the string at each comma.
-  
-
-
-  if (debug_mode==1) { 
-    //Serial.print("EC value : "); Serial.println(ecData);
-    //Serial.print("Sal value : "); Serial.println(sal);
-    }
-}
-
-void request_ec(char computerData[]) {  
-  if (debug_mode) Serial.println("--- EC Sensor :");
-  Wire.beginTransmission(ecAddress);   
-  Wire.write(computerData); 
-  delay(ecDelay2); 
-  Wire.write('r');                      
-  Wire.endTransmission();              // End the I2C data transmission.
-  delay(ecDelay);                      // Reading time needing, 600 by default
-  Wire.requestFrom(ecAddress, 48, 1);  // Call the circuit and request 48 bytes (this is more than we need)
-  ecCode = Wire.read();                // The first byte is the response code, we read this separately.
-  byte i = 0;                          // Counter used for EC_data array.
-  while (Wire.available()) {           // Are there bytes to receive.
-    ecInChar = Wire.read();            // Receive a byte.
-    ecData[i] = ecInChar;              // Load this byte into our array.
-    i += 1;                            // Incur the counter for the array element.
-    if (ecInChar == 0) {               // If we see that we have been sent a null command.
-      i = 0;                           // Reset the counter i to 0.
-      Wire.endTransmission();          // End the I2C data transmission.
-      break;                           // Exit the while loop.
-    }
-  }
-  switch (ecCode) {                    // Switch case based on what the response code is.
-    case 1:                            // Decimal 1.
-      if (debug_mode==1) Serial.println("EC Success");    // Means the command was successful.
-      break;                           // Exits the switch case.
-    case 2:                            // Decimal 2.
-      if (debug_mode==1) Serial.println("EC Failed");     // Means the command has failed.
-      break;                           // Exits the switch case.
-    case 254:                          // Decimal 254.
-      if (debug_mode==1) Serial.println("EC Pending");    // Means the command has not yet been finished calculating.
-      break;                           // Exits the switch case.
-    case 255:                          // Decimal 255.
-      if (debug_mode==1) Serial.println("EC No Data");    // Means there is no further data to send.
-      break;                           // Exits the switch case.
-  }
-  // ec = strtok(ecData, ",");
-  // tds = strtok(NULL, ",");
-  // sal = strtok(NULL ",");
-  // sg = strtok(NULL, ",");    // Let's pars the string at each comma.
-
-  if (debug_mode==1) { 
-    Serial.print("EC value : "); Serial.println(ecData);
-    Serial.print("Sal value : "); Serial.println(salData);
-    }
-}
-*/
 
 /* ---------- Functions related to BlueRobotics temperature sensor ----------*/
 void mesure_temp(){
@@ -692,7 +509,7 @@ void refresh_config_values(){
 void mesure_cycle_to_datachain(){
   reading_rtc(); // Date and time acquisition via gps
 
-  // Create a new dataschain to store the measured values
+  // Create a new datachain to store the measured values
   datachain = "";                               // Init datachain
   datachain += datetime_rtc;                    // Write date and time in datachain
 
@@ -769,13 +586,13 @@ void mesure_cycle_to_datachain(){
   }
 
   // Display datachain and outbuffer on terminal
-  if (debug_mode==1) {
+  if (debug_mode) {
     Serial.print("outBuffer completed : "); 
     Serial.println(outBuffer);
     Serial.println();
   }
 
-  // WiFilling dataframe structure
+  // Filling dataframe_write structure
   dataframe_write.d = gps.date.day();
   dataframe_write.mth = gps.date.month();
   dataframe_write.y = gps.date.year();
@@ -790,97 +607,76 @@ void mesure_cycle_to_datachain(){
 }
 
 void save_datachain_to_sd(){
-  // Text format
-  File dataFile = SD.open(dataFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
-  if (dataFile) {                                        // If file available, writes the content of the datachain to the file
-    dataFile.println(outBuffer);
-    dataFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));
+  //--- Text format saving (.txt) ---//
+  File dataFile = SD.open(dataFilename, FILE_APPEND);                           // FILE_APPEND for esp32, FILE_WRITE for arduino
+  if (dataFile) {                                                               // If file available, writes the content of the datachain to the file
+    dataFile.println(outBuffer);                                                // Classic data buffer saving (more visual in the file .txt)
+    dataFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write)); // Data structure saving (more practical and optimized but less visual)
     dataFile.println(" ");
     dataFile.close();
     if (debug_mode==1) Serial.println("Textfile created succesfully");
     if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
   }
-  else {                                                 // If file not opened, display error
+  else {                                                                        // If file not opened, display error
     if (debug_mode==1) Serial.println("error opening txt file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
     }
   }
 
-  // Binary format
-  File binFile = SD.open(binFilename, FILE_APPEND);    // FILE_APPEND for esp32, FILE_WRITE for arduino
-  if (binFile) {                                       // If file available, writes the content of the datachain to the file
-    binFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));
+  //--- Binary format saving (.bin) ---//
+  File binFile = SD.open(binFilename, FILE_APPEND);                             // Writing mode opening file  
+  if (binFile) {                                                                // If file available
+    binFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));  // Write the content of the dataframe_write struct in the file
     delay(50);
     binFile.close();
-    if (debug_mode==1) Serial.println("Binary file created succesfully");
-    if (debug_mode==1) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
+    if (debug_mode) Serial.println("Binary file created succesfully");
+    if (debug_mode) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
   }
-  else {                                                 // If file not opened, display error
+  else {                                                                        // If file not opened, display error
     if (debug_mode==1) Serial.println("error opening binary file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
     }
   }
-
-
-
-
-  /*DataFrame testframe = {29, 03, 2023, 15, 10, 42, 48.35, -4.56, 97280, 19.23};
-  ofstream outfile;
-  outfile.open("binfile.bin", ios::binary | ios::out);
-
-  if (outfile) {                                        // If file available, writes the content of the datachain to the file
-    outfile.write((char*)&testframe, sizeof(testframe));
-    outfile.close();
-    if (debug_mode==1) Serial.println("Fichier bin cree avec succes");
-    if (debug_mode==1) {Serial.print("Filename : "); Serial.println("binfile.bin"); Serial.println();}
-  }
-  else {                                                 // If file not opened, display error
-    if (debug_mode==1) Serial.println("error opening bin file");
-    for (int i=0; i<=5; i++){
-        errormessage_sd();
-    }
-  }*/
-
   delay(400);
 }
 
 void readSDbinary_to_struct(){
-  uint8_t buffer[sizeof(dataframe_read)];
-  
-
-  File binFile = SD.open(binFilename, FILE_READ);
-  if (binFile.available()) {
-        binFile.seek(reading_pos);
-        binFile.read((uint8_t *)&dataframe_read, sizeof(dataframe_read));
-        memcpy(buffer_read, &dataframe_read, sizeof(dataframe_read));
-        if(debug_mode){
-          Serial.print("dataframe_read sample : ");
-          Serial.print(dataframe_read.h);
-          Serial.print(":");
-          Serial.println(dataframe_read.min);
-          Serial.print(":");
-          Serial.println(dataframe_read.s);
-          Serial.println(dataframe_read.temp);
-          Serial.print("dataframe_read size : ");
-          Serial.println(sizeof(dataframe_read));
-          Serial.print("buffer_read size : ");
-          Serial.println(sizeof(buffer_read));
-        }
-        reading_pos += sizeof(dataframe_read);
-        delay(50);
-
-        
+  //for(int i=0; i<=FRAME_NUMBER; i++){  
+    File binFile = SD.open(binFilename, FILE_READ);                      // Reading mode opening file  
+    if (binFile.available()) {                                           // If file available 
+      binFile.seek(reading_pos);                                         // Reading from the last frame recorded since starting the uC
+      binFile.read((uint8_t *)&dataframe_read, sizeof(dataframe_read));  // Read the content of the file in dataframe_read struct
+      memcpy(buffer_read, &dataframe_read, sizeof(dataframe_read));      // Copy dataframe_read struct in uint8_t buffer for Iridium sending
+      if(debug_mode){                                                    // Testing if structure is correctly completed
+        Serial.print("dataframe_read sample : ");
+        Serial.print(dataframe_read.h);
+        Serial.print(":");
+        Serial.println(dataframe_read.min);
+        Serial.print(":");
+        Serial.println(dataframe_read.s);
+        Serial.println(dataframe_read.temp);
+        Serial.print("dataframe_read size : ");
+        Serial.println(sizeof(dataframe_read));
+        Serial.print("buffer_read size : ");
+        Serial.println(sizeof(buffer_read));
+      }
+      reading_pos += sizeof(dataframe_read);                            // Increment to go to the next dataframe struct in the file
+      delay(50);   
     }
-    else {                                                 // If file not opened, display error
-    if (debug_mode) Serial.println("error opening reading binary file");
-    for (int i=0; i<=5; i++){
-        errormessage_sd();
+    else {                                                              // If file not opened, display error
+      if (debug_mode) Serial.println("error opening reading binary file");
+      for (int i=0; i<=5; i++) errormessage_sd();
     }
-  }
+
+    //for(int j=0; j<= sizeof(buffer_read); j++) buffer_read_340[i*sizeof(buffer_read)+j] += buffer_read[j];   
+  //}
+  if(debug_mode){
+    Serial.print("buffer_read_340 size : ");
+    Serial.println(sizeof(buffer_read_340));
+  }   
 }
-
 
 /* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
 void reading_rtc() {                         
@@ -1045,9 +841,8 @@ void init_iridium(){
   else Serial.println("Modem well initialised");
 }
 
-void send_text_iridium(){
-  // Example: Print the firmware revision
-  err = modem.getFirmwareVersion(version, sizeof(version));
+void print_iridium_infos(){
+  err = modem.getFirmwareVersion(version, sizeof(version)); // Print the firmware revision
   if (err != ISBD_SUCCESS)
   {
      Serial.print("FirmwareVersion failed: error ");
@@ -1058,7 +853,7 @@ void send_text_iridium(){
   Serial.print(version);
   Serial.println(".");
 
-  // Example: Test the signal quality.
+  // Test signal quality.
   // This returns a number between 0 and 5.
   // 2 or better is preferred.
   err = modem.getSignalQuality(signalQuality);
@@ -1072,94 +867,56 @@ void send_text_iridium(){
   Serial.print("On a scale of 0 to 5, signal quality is currently ");
   Serial.print(signalQuality);
   Serial.println(".");
+}
 
-  int err = modem.sendSBDText(outBuffer);
+void send_text_iridium(){
+  if (debug_mode) Serial.print("Trying to send the text message.  This might take several minutes.\r\n");
+  int err = modem.sendSBDText(outBuffer);  // Iridium sending command 
   if (err != ISBD_SUCCESS)
   {
-    Serial.print("Transmission failed with error code ");
-    Serial.println(err);
+    if(debug_mode){
+      Serial.print("Transmission failed with error code ");
+      Serial.println(err);
+      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
+    }
   }
-  else Serial.println("outBuffer sending Ok");
-
-  // Send the message
-  /*Serial.print("Trying to send the message.  This might take several minutes.\r\n");
-  err = modem.sendSBDText("Test OOD v1.0");
-  if (err != ISBD_SUCCESS)
-  {
-    Serial.print("sendSBDText failed: error ");
-    Serial.println(err);
-    if (err == ISBD_SENDRECEIVE_TIMEOUT)
-      Serial.println("Try again with a better view of the sky.");
-  }
-
-  else
-  {
-    Serial.println("Hey, it worked!");
-  }*/
+  else{ if(debug_mode) Serial.println("Text buffer sending Ok\n"); }
 
   #if DIAGNOSTICS
-void ISBDConsoleCallback(IridiumSBD *device, char c)
-{
-  //Serial.write(c);
-}
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
 
-void ISBDDiagsCallback(IridiumSBD *device, char c)
-{
-  //Serial.write(c);
-}
-#endif
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+  #endif
 }
 
 void send_binary_iridium(){
-  // Example: Test the signal quality.
-  // This returns a number between 0 and 5.
-  // 2 or better is preferred.
-  err = modem.getSignalQuality(signalQuality);
+  if (debug_mode) Serial.print("Trying to send the binary message.  This might take several minutes.\r\n");
+  int err = modem.sendSBDBinary(buffer_read, sizeof(buffer_read)); // Iridium sending command 
   if (err != ISBD_SUCCESS)
   {
-    Serial.print("SignalQuality failed: error ");
-    Serial.println(err);
-    return;
+    if(debug_mode){
+      Serial.print("Transmission failed with error code ");
+      Serial.println(err);
+      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
+    }
   }
-
-  Serial.print("On a scale of 0 to 5, signal quality is currently ");
-  Serial.print(signalQuality);
-  Serial.println(".");
-
-  //int err = modem.sendSBDBinary(outBuffer_byte, 55);
-  int err = modem.sendSBDBinary(buffer_read, sizeof(buffer_read));
-  if (err != ISBD_SUCCESS)
-  {
-    Serial.print("Transmission failed with error code ");
-    Serial.println(err);
-  }
-  else Serial.println("outBuffer sending Ok");
-
-  // Send the message
-  /*Serial.print("Trying to send the message.  This might take several minutes.\r\n");
-  err = modem.sendSBDText("Test OOD v1.0");
-  if (err != ISBD_SUCCESS)
-  {
-    Serial.print("sendSBDText failed: error ");
-    Serial.println(err);
-    if (err == ISBD_SENDRECEIVE_TIMEOUT)
-      Serial.println("Try again with a better view of the sky.");
-  }
-
-  else
-  {
-    Serial.println("Hey, it worked!");
-  }*/
+  else{if(debug_mode) Serial.println("Binary buffer sending Ok\n");}
 
   #if DIAGNOSTICS
-void ISBDConsoleCallback(IridiumSBD *device, char c)
-{
-  //Serial.write(c);
-}
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
 
-void ISBDDiagsCallback(IridiumSBD *device, char c)
-{
-  //Serial.write(c);
-}
-#endif
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+  #endif
 }

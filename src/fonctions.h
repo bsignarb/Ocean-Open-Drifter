@@ -3,8 +3,8 @@
 
 /* ---------- Librarie calls ----------*/
 #include <Arduino.h>
-#include <Wire.h>  // Enable I2C
-#include <SPI.h>   // Enable SPI
+#include <Wire.h>         // Enable I2C
+#include <SPI.h>          // Enable SPI
 #include <WiFi.h>
 
 #include <string.h> 
@@ -16,9 +16,9 @@
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
 #include <Ezo_i2c_util.h> // brings in common print statements
 
-#include "TSYS01.h"  // BlueRobotics temperature sensor
-#include <SD.h>      // SD card
-#include <DS3231.h>  // RTC clock
+#include "TSYS01.h"       // BlueRobotics temperature sensor
+#include <SD.h>           // SD card
+#include <DS3231.h>       // RTC clock
 
 #include <SoftwareSerial.h>
 #include <HardwareSerial.h>
@@ -41,34 +41,12 @@ using namespace std;
 *  See function void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
 *  For the moment only 1 possible parameter at a time 
 */
-#define EC_ENABLED 1
-#define TDS_ENABLED 0
-#define SAL_ENABLED 0
-#define SG_ENABLED 0
-
-/* Not used at the moment
-extern char ecData[48];                    // We make a 48 byte character array to hold incoming data from the EC circuit.
-extern char salData[48]; 
-extern char tdsData[48];
-extern char sgData[48];
-*/
+#define EC_ENABLED 1   // To be removed shortly
+#define TDS_ENABLED 0  // To be removed shortly
+#define SAL_ENABLED 0  // To be removed shortly
+#define SG_ENABLED 0   // To be removed shortly
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
-
-/* Not used for the moment
-class ConductSensor : protected Ezo_board
-{
-  public:
-    void Measure();
-    void ProbeTypeSetting();
-    void EnableParameters(bool ec, bool tds, bool s, bool sg);
-    void SendCmdAndResponse(char cmd[]);
-  
-  private:
-    uint8_t i2c_address;
-    const char* name = 0;
-};
-*/
 
 /** Initiate Atlas EC conductivity sensor */
 void initEC();
@@ -132,11 +110,6 @@ void enable_ec_parameters(bool ec, bool tds, bool s, bool sg);
   *  "Find"    => LED rapidly blinks white, used to help find device 
   */
 void send_ec_cmd_and_response(char cmd[]);
-  
-/* Plus utilisées pour le moment Anciennes fonctions de mesure EC EZO
-void mesureEClib(); 
-void request_ec(char computerData[]);
-*/
 
 /* ---------- Functions related to the BlueRobotics temperature sensor ----------*/
 
@@ -181,6 +154,7 @@ void mesure_cycle_to_datachain();
 /** @brief Writes the content of datachain to the dataFilename file on the SD card */  
 void save_datachain_to_sd();
 
+/** @brief Read datalog file in a dataframe_read structure for Iridium sending */
 void readSDbinary_to_struct();
 
   
@@ -220,11 +194,19 @@ void init_ina219();
 void get_current();  
 
 /* ---------- Functions related to Iridium Rockblock 9603 ----------*/
+/** @brief Initialize and test Iridium module */
 void init_iridium();
+
+/** @brief Give informations about Iridium module (firmware version + signal quality) */
+void print_iridium_infos();
+
+/** @brief Send text data buffer by Iridium module */
 void send_text_iridium();
+
+/** @brief Send binary data buffer by Iridium module */
 void send_binary_iridium();
 
-/* ---------- Fonctions annexes ----------*/
+/* ---------- Annex functions ----------*/
 
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
   * @param VBATT_PIN Constante à modifier définie plus haut 
@@ -244,17 +226,13 @@ void all_sleep();
 /** @brief General wake up */  
 void all_wakeup();
 
-void charToBinaryArray(char c, int *binary_array);
 
-
+/* ---------- State machine functions ----------*/
 
 void init_cycle();
-
 /** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
 void deployed_cycle();
-
 void recovery_cycle();
-
 void test_cycle_init();
 void test_cycle();
 
