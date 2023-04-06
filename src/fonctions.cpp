@@ -4,24 +4,21 @@ using namespace std;
 /* ------------------------------------------------- DECLARATIONS ------------------------------------------------------------------*/
 
 /*---------- General declarations ----------*/ 
-#define uS_TO_S_FACTOR 1000000ULL       // Conversion factor for micro seconds to seconds 
-
-//const int greenled = 35;               // Information led 
-//const int yellowled = 34;              // Information led 
-//const int redled = 39;                 // Information led
+#define uS_TO_S_FACTOR 1000000ULL        // Conversion factor for micro seconds to seconds 
 int led_mode = 1;                        // Use the LED to indicate what's going on
-int debug_mode = 1;                      // Sends information to the serial monitor
+int debug_mode = 1;                      // Sends important informations to the serial monitor
+int debug_mode2 = 0;                     // Sends less important informations to the serial monitor
 int nbrMes = 3;                          // Number of measurements to perform (then redefined by the config file)
 int bootCount = 0;                       // Useful to have a 1st cycle of writing in file different from the following cycles
 int TIME_TO_SLEEP = 5;                   // Duration between each cycle (deep sleep and wakeup)
 
 /*---------- Carte Atlas EC EZO ----------*/
 #define ecAddress 100                    // Board address definition for I2C communication
-
 Ezo_board EC = Ezo_board(100, "EC");     // EC object creation of the Ezo_board class with address 100
 int ecDelay = 300;                       // Delays definition       
 const int commut_EC = 4;                 // Controls power supply of the EC ezo sensor  
-float conductivity, total_dissolved_solids, salinity, seawater_gravity;    
+float conductivity, total_dissolved_solids, salinity, seawater_gravity;  
+uint16_t conduct_int, tds_int, sal_int, swg_int;
 
 /*---------- BlueRobotics temperature sensor ----------*/
 TSYS01 sensor_fastTemp;                  // Bluerobotics temperature sensor declaration
@@ -30,11 +27,9 @@ float fast_temp;
 /*---------- Grove GPS v1.2 + atomic clock ----------*/
 #define RXD_GPS 26                       // UART ports declaration for communication with GPS
 #define TXD_GPS 27
-
 //HardwareSerial neogps(1);              // Instance creation for GPS module (Hardware version)
 SoftwareSerial neogps(RXD_GPS, TXD_GPS); // Instance creation for GPS module (Software version)   
 TinyGPSPlus gps;                         // GPS object creation from TinyGPSPlus class
-
 const int commut_gps = 9;                // GPS power switching 
 double lattitude, longitude, altitude, vitesse;
 int nb_satellites;
@@ -45,53 +40,47 @@ std::string lat;
 std::string lng;
 
 /*---------- SD card and config file ----------*/
-#define FRAME_NUMBER 7    // Number of frames concatenation for sending Iridium (340 bytes max)
-
 String datachain = "";     // Data string for storing the measured parameters
 char outBuffer[60];        // To be removed shortly
 String outBuffer_string;   // To be removed shortly
 byte outBuffer_byte[55];   // To be removed shortly
-
 int reading_pos = 0;
 
 typedef struct dataframe   // Structure creation for data storage
 {
+  float lat;
+  float lng;
+  float temp;
+  float cond;
+  uint16_t y;
   uint8_t d;
   uint8_t mth;
-  uint16_t y;
   uint8_t h;
   uint8_t min;
   uint8_t s;
-  float lat;
-  float lng;
-  float cond;
-  float temp;
 };
 dataframe dataframe_write;                                              // Structure to write data in the file
 dataframe dataframe_read;                                               // Structure to read data from the file
 
 uint8_t buffer_read[sizeof(dataframe_read)];                            // Binary reading file buffer for Iridium sending
-uint16_t buffer_read_340[FRAME_NUMBER*sizeof(dataframe_read)];          // Binary reading file buffer for Iridium sending (14 dataframes concatenation)
+uint8_t buffer_read_340[FRAME_NUMBER*sizeof(dataframe_read)];           // Binary reading file buffer for Iridium sending (14 dataframes concatenation)
 
 const int cspin_SD=15;                                                  // SPI bus selection signal
 String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
 File confFile;                                                          // To read the config.txt file
-
 String fichier_config = "/config.txt";                                  // Name of the configuration file
-String dataFilename = "/datalog.txt";                                   // Data file name
-String binFilename = "/binfile.bin";
+String dataFilename = "/datalog.txt";                                   // Text data file name
+String binFilename = "/binfile.bin";                                    // Binary data file name
 
 /*---------- RTC DS3231 Adafruit ----------*/
 DS3231 Clock;                                                           // Object creation from DS3231 class
 bool Century = false;
 bool h12;
 bool PM;
-
 String second_rtc, minute_rtc, hour_rtc, day_rtc, month_rtc, year_rtc;  // For date format in several variables
 String datenum_rtc;                                                     // For date format in 1 writing (datenum = "day/month/year")
 String timenum_rtc;                                                     // For date format in 1 writing(datetime = "hour:minute:second")
 String datetime_rtc;       
-
 bool rtc_set = false;                                                   // To know if the RTC has been correctly initialized
 
 /*---------- INA219 current sensor Adafruit ----------*/
@@ -100,11 +89,9 @@ bool rtc_set = false;                                                   // To kn
 /*---------- IridiumSBD Rockblock 9603 ----------*/
 #define RXD_IRID 10                // UART ports declaration for communication with Rockblock
 #define TXD_IRID 5
-
 //SoftwareSerial ssIridium(5, 10); // RockBLOCK serial port on 10 5 (Software version)
 HardwareSerial ssIridium(1);       // RockBLOCK serial port on 10 5 (Hardware version)
 IridiumSBD modem(ssIridium, 2);    // RockBLOCK Object creation with SLEEP pin on 2
-
 int signalQuality = -1;
 int err;
 char version[12];
@@ -182,16 +169,18 @@ void all_wakeup(){
 
 /* ---------- Functions related to Atlas EC EZO sensor ----------*/
 void initEC(){
-  pinMode(commut_EC, OUTPUT);   // Switch on power supply of the EC ezo sensor
-  digitalWrite(commut_EC, HIGH);
+  pinMode(commut_EC, OUTPUT);   
+  digitalWrite(commut_EC, HIGH); // Switch on power supply of the EC ezo sensor
 }
 
 void mesureEC(){
   EC.send_read_cmd(); // Sends a read request to the sensor
   delay(1000);
-  if (EC_ENABLED){
+  // Depends on which parameter will be returned
+  if (EC_ENABLED){                                 // Conductivity
     EC.receive_read_cmd(); 
     conductivity = EC.get_last_received_reading(); // Returns the last sensor reading in float
+    conduct_int = (uint16_t) conductivity;         // Conversion in uint16_16 to save space for Iridium sending
     if(debug_mode){
       Serial.print("Conductivité : ");
       Serial.print(conductivity);
@@ -199,9 +188,10 @@ void mesureEC(){
       Serial.print(" uS/cm");
     }
   }
-  else if (TDS_ENABLED){
+  else if (TDS_ENABLED){                           // Total dissolved solids
     EC.receive_read_cmd(); 
     total_dissolved_solids = EC.get_last_received_reading();
+    tds_int = (uint16_t) total_dissolved_solids;
     if(debug_mode){
       Serial.print("Total dissolved solids : ");
       Serial.print(total_dissolved_solids);
@@ -209,9 +199,10 @@ void mesureEC(){
       Serial.print(" ppm");
     }
   }
-  else if (SAL_ENABLED){
+  else if (SAL_ENABLED){                           // Salinity
     EC.receive_read_cmd();
     salinity = EC.get_last_received_reading();
+    sal_int = (uint16_t) salinity;
     if(debug_mode){
       Serial.print("Salinity : ");
       Serial.print(salinity);
@@ -219,9 +210,10 @@ void mesureEC(){
       Serial.print(" PSU (between 0.00 - 42.00)");
     }
   }
-  else if (SG_ENABLED){
+  else if (SG_ENABLED){                            // Sea water gravity
     EC.receive_read_cmd();
     seawater_gravity = EC.get_last_received_reading();
+    swg_int = (uint16_t) seawater_gravity;
     if(debug_mode){
       Serial.print("Sea water gravity : ");
       Serial.print(seawater_gravity);
@@ -235,9 +227,9 @@ void mesureEC(){
 void setting_ec_probe_type() { 
   EC.send_cmd_with_num("K,", PROBE_TYPE);  // Sends any command with the number appended as a string afterwards
   delay(ecDelay);
-  Serial.println("Probe type : ");
+  if(debug_mode2) Serial.println("Probe type : ");
   receive_and_print_response(EC);          // Used to handle receiving responses and printing them in a common format
-  Serial.println();
+  if(debug_mode2) Serial.println();
 }
 
 void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ) { 
@@ -251,7 +243,7 @@ void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ) {
   delay(ecDelay);
   EC.send_cmd("O,?");
   delay(ecDelay);
-  if(debug_mode){
+  if(debug_mode2){
     Serial.print("Parameters enabled : ");
     receive_and_print_response(EC);
   }
@@ -260,7 +252,7 @@ void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ) {
 void send_ec_cmd_and_response(char cmd[]) { 
   EC.send_cmd((const char*)cmd);
   delay(ecDelay);
-  Serial.print("Response : ");
+  if(debug_mode) Serial.print("Response : ");
   receive_and_print_response(EC); 
   Serial.println();
 }
@@ -281,7 +273,6 @@ void mesure_temp(){
 void init_gps(){
   //neogps.begin(9600, SERIAL_8N1, RXD, TXD); // begin GPS hardware serial
   neogps.begin(9600);                         // begin GPS software serial
-
   pinMode(commut_gps, OUTPUT); 
   digitalWrite(commut_gps, HIGH);
 }
@@ -298,7 +289,6 @@ void scanning_gps_time(){
       }
     }
   }
-
   if(newData == true)   
   {
     newData = false;
@@ -322,7 +312,6 @@ void scanning_gps_coord(){
       }
     }
   }
-
   if(newData == true)   
   {
     newData = false;
@@ -353,21 +342,10 @@ void print_coord_gps()
 
     if(debug_mode){
       Serial.print("Donnees GPS : ");
-      
       Serial.print("lattitude : ");
       Serial.print(&(lat[0]));        // Pass from std string to char value (to make it easier to display)
       Serial.print(" longitude : ");
-      Serial.print(&(lng[0]));        // Pass from std string to char value (to make it easier to display)
-      Serial.print(" | Nombre de satellites : ");
-      Serial.print(nb_satellites);
-
-      Serial.print(" | Altitude : ");
-      Serial.print(altitude);
-      Serial.print(" metres");
-
-      Serial.print(" | Vitesse : ");
-      Serial.print(vitesse);
-      Serial.println(" km/h");
+      Serial.println(&(lng[0]));      // Pass from std string to char value (to make it easier to display)
     }
   }
   else
@@ -382,13 +360,11 @@ void print_date_gps(){
     day_gps = gps.date.day();
     month_gps = gps.date.month();
     year_gps = gps.date.year();
-    
     // Concatenation in datenum to facilitate processing on datachain (datenum = "day/month/year")
     datenum_gps = "";   
     datenum_gps += day_gps; datenum_gps += "/";
     datenum_gps += month_gps; datenum_gps += "/";
     datenum_gps += year_gps; 
-
     if(debug_mode){
       Serial.print(F("DATE GPS : "));
       Serial.print(datenum_gps);
@@ -401,16 +377,14 @@ void print_date_gps(){
 
   if (gps.time.isUpdated() == 1)
   {
-    hour_gps = gps.time.hour() + 1;
+    hour_gps = gps.time.hour() + 2;
     minute_gps = gps.time.minute();
     second_gps = gps.time.second();
-
-    // Concaténation en datetime pour faciliter le traitement sur datachain (datetime = "hour:minute:second")
+    // Concatenation in datenum to facilitate processing on datachain (datetime = "hour:minute:second")
     datetime_gps = "";   
     datetime_gps += hour_gps; datetime_gps += ":";
     datetime_gps += minute_gps; datetime_gps += ":";
     datetime_gps += second_gps; 
-
     if(debug_mode){
       Serial.print(F(" | TIME GPS (UTC+1) : "));
       Serial.println(datetime_gps);
@@ -450,7 +424,6 @@ void errormessage_sd(){
 
 void lecture_config(){
   confFile = SD.open(fichier_config, FILE_READ); // Opens config.txt file on SD card
-
   char phrase[200];
   byte index = 0;
   char x=0;
@@ -476,7 +449,6 @@ void lecture_config(){
               reste = reste.substring(0,k); // Creates a sub-string of what is written before ";".
             }
             reste.trim();                   // Removes spaces at the beginning and at the end
-            
             // Extract the values to place them in the program variables
             if (reste.indexOf('=') >0) {                             // Equal sign found
               String clef = reste.substring(0,reste.indexOf('='));   // Creates a sub-string of what is before "=".
@@ -491,7 +463,7 @@ void lecture_config(){
           }
         }          
       }
-     }
+    }
     confFile.close(); // Close config file
   } else {
     Serial.println("error opening "+fichier_config);
@@ -515,82 +487,47 @@ void mesure_cycle_to_datachain(){
 
   enable_ec_parameters(EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED); // Controls the active parameters at the output of the conductivity sensor
 
-  // Reads the sensors several times and adds their values to datachain
-  for(int n=1; n<=nbrMes; n++){
-    if(debug_mode){Serial.print("--- Measure n° : "); Serial.print(n); Serial.print("/");Serial.println(nbrMes);}
+  // Reads the sensors and add their values to datachain 
+  if(debug_mode2) Serial.println("Measure : ");
 
-    mesureEC();           // Atlas ec ezo sensor measure
-    mesure_temp();        // Temperature sensor measure
-    scanning_gps_coord(); // Gps coordinates acquisition
-    if(debug_mode) Serial.println("");
+  mesureEC();           // Atlas ec ezo sensor measure
+  mesure_temp();        // Temperature sensor measure
+  scanning_gps_coord(); // Gps coordinates acquisition
+  if(debug_mode) Serial.println("");
 
-    datachain += " | (lat)";  
-    datachain += &(lat[0]); datachain += " , (long)";     // Writte lattitude in datachain
-    datachain += &(lng[0]); datachain += " ; ";     // Writte longitude in datachain
-    datachain += fast_temp; datachain += "°C ; ";   // Writte temperature in datachain
-    
-    // Writing ec ezo unity according to the enabled parameters
-    if (EC_ENABLED){ 
-      datachain += conductivity; datachain += "uS/cm ";
-    }
-    else if (TDS_ENABLED){ 
-      datachain += total_dissolved_solids; datachain += "ppm ";
-    }
-    else if (SAL_ENABLED){
-      datachain += salinity; datachain += "PSU ";
-    }
-    else if (SG_ENABLED){
-      datachain += seawater_gravity;
-    }
-
-    // outBuffer for Iridum sending  (avec caracteres mise en forme)
-    /*sprintf(outBuffer, "%02d/%02d/%d,%02d:%02d:%02d,%0.6lf,%0.6lf,%0.2f,%0.2f", 
-      gps.date.day(), 
-      gps.date.month(),
-      gps.date.year(), 
-      gps.time.hour()+2, 
-      gps.time.minute(), 
-      gps.time.second(),
-      gps.location.lat(),
-      gps.location.lng(),
-      conductivity,
-      fast_temp);*/
-
-    // outBuffer for Iridum sending  (trame brute)
-    sprintf(outBuffer, "%02d%02d%d%02d%02d%02d%0.6lf%0.6lf%0.2f%0.2f", 
-      gps.date.day(), 
-      gps.date.month(),
-      gps.date.year(), 
-      gps.time.hour()+2, 
-      gps.time.minute(), 
-      gps.time.second(),
-      gps.location.lat(),
-      gps.location.lng(),
-      conductivity,
-      fast_temp);
-
-    outBuffer_string = outBuffer; // Char to string
-
-    // String to binary
-    Serial.print("Length buffer : ");
-    Serial.println(outBuffer_string.length());
-    Serial.print("Length dataframe : ");
-    Serial.println(sizeof(dataframe_write));
-    outBuffer_string.getBytes(outBuffer_byte, outBuffer_string.length() + 1);
-    Serial.println("Binary outBuffer : "); 
-    for (int i = 0; i < outBuffer_string.length() + 1; i++){
-      Serial.print(outBuffer_byte[i], BIN);
-      Serial.print(" ");
-    }
-    Serial.println('\n');  
+  datachain += " | (lat)";  
+  datachain += &(lat[0]); datachain += " , (long)"; // Writte lattitude in datachain
+  datachain += &(lng[0]); datachain += " ; ";       // Writte longitude in datachain
+  datachain += fast_temp; datachain += "°C ; ";     // Writte temperature in datachain
+  
+  // Writing ec ezo unity according to the enabled parameters
+  if (EC_ENABLED){ 
+    datachain += conductivity; datachain += "uS/cm ";
+  }
+  else if (TDS_ENABLED){ 
+    datachain += total_dissolved_solids; datachain += "ppm ";
+  }
+  else if (SAL_ENABLED){
+    datachain += salinity; datachain += "PSU ";
+  }
+  else if (SG_ENABLED){
+    datachain += seawater_gravity;
   }
 
-  // Display datachain and outbuffer on terminal
-  if (debug_mode) {
-    Serial.print("outBuffer completed : "); 
-    Serial.println(outBuffer);
-    Serial.println();
-  }
+  // outBuffer for Iridum sending (trame brute)
+  sprintf(outBuffer, "%02d%02d%d%02d%02d%02d%0.6lf%0.6lf%0.2f%0.2f", 
+    gps.date.day(), 
+    gps.date.month(),
+    gps.date.year(), 
+    gps.time.hour()+2, 
+    gps.time.minute(), 
+    gps.time.second(),
+    gps.location.lat(),
+    gps.location.lng(),
+    conductivity,
+    fast_temp);
+
+  outBuffer_string = outBuffer; // Char to string
 
   // Filling dataframe_write structure
   dataframe_write.d = gps.date.day();
@@ -603,7 +540,6 @@ void mesure_cycle_to_datachain(){
   dataframe_write.lng = gps.location.lng();
   dataframe_write.cond = conductivity;
   dataframe_write.temp = fast_temp;
-
 }
 
 void save_datachain_to_sd(){
@@ -614,11 +550,11 @@ void save_datachain_to_sd(){
     dataFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write)); // Data structure saving (more practical and optimized but less visual)
     dataFile.println(" ");
     dataFile.close();
-    if (debug_mode==1) Serial.println("Textfile created succesfully");
-    if (debug_mode==1) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
+    if (debug_mode2) Serial.println("Textfile created succesfully");
+    if (debug_mode2) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
   }
   else {                                                                        // If file not opened, display error
-    if (debug_mode==1) Serial.println("error opening txt file");
+    if (debug_mode) Serial.println("error opening txt file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
     }
@@ -630,11 +566,12 @@ void save_datachain_to_sd(){
     binFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));  // Write the content of the dataframe_write struct in the file
     delay(50);
     binFile.close();
-    if (debug_mode) Serial.println("Binary file created succesfully");
-    if (debug_mode) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
+    
+    if (debug_mode2) Serial.println("Binary file created succesfully");
+    if (debug_mode2) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
   }
   else {                                                                        // If file not opened, display error
-    if (debug_mode==1) Serial.println("error opening binary file");
+    if (debug_mode) Serial.println("error opening binary file");
     for (int i=0; i<=5; i++){
         errormessage_sd();
     }
@@ -643,38 +580,59 @@ void save_datachain_to_sd(){
 }
 
 void readSDbinary_to_struct(){
-  //for(int i=0; i<=FRAME_NUMBER; i++){  
+  Serial.println("------ READING SD binary to struct ------");
+  for(int i=0; i<=FRAME_NUMBER; i++){                                    // Concatenation of n buffer_read in buffer_read_340 
     File binFile = SD.open(binFilename, FILE_READ);                      // Reading mode opening file  
     if (binFile.available()) {                                           // If file available 
       binFile.seek(reading_pos);                                         // Reading from the last frame recorded since starting the uC
       binFile.read((uint8_t *)&dataframe_read, sizeof(dataframe_read));  // Read the content of the file in dataframe_read struct
+      //binFile.read((uint8_t *)&buffer_read, sizeof(dataframe_read));
       memcpy(buffer_read, &dataframe_read, sizeof(dataframe_read));      // Copy dataframe_read struct in uint8_t buffer for Iridium sending
-      if(debug_mode){                                                    // Testing if structure is correctly completed
-        Serial.print("dataframe_read sample : ");
-        Serial.print(dataframe_read.h);
-        Serial.print(":");
-        Serial.println(dataframe_read.min);
-        Serial.print(":");
-        Serial.println(dataframe_read.s);
-        Serial.println(dataframe_read.temp);
-        Serial.print("dataframe_read size : ");
-        Serial.println(sizeof(dataframe_read));
-        Serial.print("buffer_read size : ");
-        Serial.println(sizeof(buffer_read));
-      }
-      reading_pos += sizeof(dataframe_read);                            // Increment to go to the next dataframe struct in the file
+      reading_pos += sizeof(dataframe_read);                             // Increment to go to the next dataframe struct in the file
       delay(50);   
     }
-    else {                                                              // If file not opened, display error
+    else {                                                               // If file not opened, display error
       if (debug_mode) Serial.println("error opening reading binary file");
       for (int i=0; i<=5; i++) errormessage_sd();
     }
-
-    //for(int j=0; j<= sizeof(buffer_read); j++) buffer_read_340[i*sizeof(buffer_read)+j] += buffer_read[j];   
-  //}
-  if(debug_mode){
+    
+    for(int j=0; j<=sizeof(buffer_read); j++) buffer_read_340[i*sizeof(buffer_read)+j] = buffer_read[j];   // Push buffer_read in buffer_read_340 
+  }                                                                     
+  if(debug_mode){                                                        // Testing if structure and buffers are correctly completed
+    Serial.println("dataframe_read sample : ");
+    Serial.print("lat : ");
+    Serial.println(dataframe_read.lat);
+    Serial.print("lng : ");
+    Serial.println(dataframe_read.lng);
+    Serial.print("temp : ");
+    Serial.println(dataframe_read.temp);
+    Serial.print("cond : ");
+    Serial.println(dataframe_read.cond);
+    Serial.print(dataframe_read.y); 
+    Serial.print("/");
+    Serial.print(dataframe_read.d);
+    Serial.print("/");
+    Serial.println(dataframe_read.mth);
+    Serial.print(dataframe_read.h);
+    Serial.print(":");
+    Serial.print(dataframe_read.min);
+    Serial.print(":");
+    Serial.println(dataframe_read.s);
+    Serial.print("dataframe_read size : ");
+    Serial.println(sizeof(dataframe_read));
+    Serial.print("dataframe_read : ");
+    for(int i = 0; i < sizeof(dataframe_read); i++) Serial.printf("%02x", (unsigned int) ((char*)&dataframe_read)[i]);
+    Serial.println("\n");
+    Serial.print("buffer_read size : ");
+    Serial.println(sizeof(buffer_read));
+    Serial.print("buffer_read : ");
+    for(int i=0; i<=sizeof(buffer_read); i++) Serial.printf("%02x", buffer_read[i], HEX);  
+    Serial.println("\n");
     Serial.print("buffer_read_340 size : ");
     Serial.println(sizeof(buffer_read_340));
+    Serial.print("buffer_read_340 : ");
+    for(int i=0; i<=sizeof(buffer_read_340); i++) Serial.printf("%02x", buffer_read_340[i], HEX);  
+    Serial.println("\n");
   }   
 }
 
@@ -720,7 +678,7 @@ void reading_rtc() {
   timenum_rtc = ""; timenum_rtc += hour_rtc; timenum_rtc += minute_rtc; timenum_rtc += second_rtc;
   datetime_rtc = ""; datetime_rtc += day_rtc; datetime_rtc += "/"; datetime_rtc += month_rtc; datetime_rtc += "/20"; datetime_rtc += year_rtc; datetime_rtc += " "; datetime_rtc += hour_rtc; datetime_rtc += ":"; datetime_rtc += minute_rtc; datetime_rtc += ":"; datetime_rtc += second_rtc;
 
-  if (debug_mode==1) {
+  if (debug_mode2) {
     Serial.println("\nRTC values :");
     Serial.print("Date RTC : "); Serial.println(datenum_rtc);
     Serial.print("Time RTC : "); Serial.println(timenum_rtc);
@@ -769,11 +727,11 @@ int check_rtc_set()
   if(Clock.getYear() != 23)  // If year < 2010 (only the 2 last digits are taken in account)
   {
     rtc_set = false;        // RTC is not correctly set
-    Serial.println("RTC time not set\n");
+    if(debug_mode2) Serial.println("RTC time not set\n");
     return 0;
   }else{
     rtc_set = true;         // RTC has been set
-    Serial.println("RTC time set\n");
+    if(debug_mode2) Serial.println("RTC time set\n");
     return 1;
   }
 }
@@ -897,7 +855,8 @@ void send_text_iridium(){
 
 void send_binary_iridium(){
   if (debug_mode) Serial.print("Trying to send the binary message.  This might take several minutes.\r\n");
-  int err = modem.sendSBDBinary(buffer_read, sizeof(buffer_read)); // Iridium sending command 
+  int err = modem.sendSBDBinary(buffer_read_340, sizeof(buffer_read_340)); // Iridium sending command 
+
   if (err != ISBD_SUCCESS)
   {
     if(debug_mode){
@@ -906,7 +865,7 @@ void send_binary_iridium(){
       if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
     }
   }
-  else{if(debug_mode) Serial.println("Binary buffer sending Ok\n");}
+  else{ if(debug_mode) Serial.println("Binary buffer sending Ok\n"); }
 
   #if DIAGNOSTICS
   void ISBDConsoleCallback(IridiumSBD *device, char c)

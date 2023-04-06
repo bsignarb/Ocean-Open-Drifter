@@ -6,12 +6,12 @@
 #include <Wire.h>         // Enable I2C
 #include <SPI.h>          // Enable SPI
 #include <WiFi.h>
+#include <SoftwareSerial.h>
+#include <HardwareSerial.h>
 
 #include <string.h> 
-#include <iostream>
 #include <bits/stdc++.h>
 #include <stdlib.h>
-#include <fstream>
 
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
 #include <Ezo_i2c_util.h> // brings in common print statements
@@ -19,14 +19,9 @@
 #include "TSYS01.h"       // BlueRobotics temperature sensor
 #include <SD.h>           // SD card
 #include <DS3231.h>       // RTC clock
-
-#include <SoftwareSerial.h>
-#include <HardwareSerial.h>
-#include <TinyGPS++.h>
-
+#include <TinyGPS++.h>    // GPS
+#include <IridiumSBD.h>   // Iridium module
 //#include <Adafruit_INA219.h> // Voltage and current sensor
-
-#include <IridiumSBD.h>
 
 using namespace std;
 
@@ -45,6 +40,8 @@ using namespace std;
 #define TDS_ENABLED 0  // To be removed shortly
 #define SAL_ENABLED 0  // To be removed shortly
 #define SG_ENABLED 0   // To be removed shortly
+
+#define FRAME_NUMBER 14  // Number of frames concatenation for sending Iridium (340 bytes max)
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
@@ -112,12 +109,10 @@ void enable_ec_parameters(bool ec, bool tds, bool s, bool sg);
 void send_ec_cmd_and_response(char cmd[]);
 
 /* ---------- Functions related to the BlueRobotics temperature sensor ----------*/
-
 /** @brief Sends a reading request to the sensor and returns the temperature to the serial monitor */
 void mesure_temp();
   
 /* ---------- Grove GPS v1.2 + atomic clock related functions ----------*/
-
 /** @brief Initialize the communication with the GPS in UART serial link at 9600 bauds */
 void init_gps(); 
 
@@ -135,7 +130,6 @@ void print_date_gps();
 
   
 /* ---------- Functions related to the SD card and the config file ----------*/
-
 /** @brief Initializes and tests the SD card */
 void init_sd();
 
@@ -154,12 +148,11 @@ void mesure_cycle_to_datachain();
 /** @brief Writes the content of datachain to the dataFilename file on the SD card */  
 void save_datachain_to_sd();
 
-/** @brief Read datalog file in a dataframe_read structure for Iridium sending */
+/** @brief Read datalog file in a dataframe_read structure and buffer_read_340 for Iridium sending */
 void readSDbinary_to_struct();
 
   
 /* ---------- Functions related to the RTC DS3231 Adafruit ----------*/
-
 /** @brief Reads the RTC clock and writes to useful variables */
 void reading_rtc();
 
@@ -189,7 +182,6 @@ int check_rtc_set();
 
 
 /* ---------- Functions related to INA219 current sensor ----------*/
-
 void init_ina219();
 void get_current();  
 
@@ -207,7 +199,6 @@ void send_text_iridium();
 void send_binary_iridium();
 
 /* ---------- Annex functions ----------*/
-
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
   * @param VBATT_PIN Constante à modifier définie plus haut 
   * @returns float voltage
@@ -228,7 +219,6 @@ void all_wakeup();
 
 
 /* ---------- State machine functions ----------*/
-
 void init_cycle();
 /** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
 void deployed_cycle();
@@ -236,6 +226,4 @@ void recovery_cycle();
 void test_cycle_init();
 void test_cycle();
 
-
-  
 #endif
