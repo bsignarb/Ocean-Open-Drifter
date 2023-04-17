@@ -18,7 +18,8 @@
 
 #include "TSYS01.h"       // BlueRobotics temperature sensor
 #include <SD.h>           // SD card
-#include <DS3231.h>       // RTC clock
+//#include <DS3231.h>       // RTC clock
+#include <RTClib.h>       // RTC clock
 #include <TinyGPS++.h>    // GPS
 #include <IridiumSBD.h>   // Iridium module
 //#include <Adafruit_INA219.h> // Voltage and current sensor
@@ -42,6 +43,9 @@ using namespace std;
 #define SG_ENABLED 0   // To be removed shortly
 
 #define FRAME_NUMBER 14  // Number of frames concatenation for sending Iridium (340 bytes max)
+
+extern bool sending_ok;
+extern uint8_t switch_state;
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
@@ -151,15 +155,18 @@ void save_datachain_to_sd();
 /** @brief Read datalog file in a dataframe_read structure and buffer_read_340 for Iridium sending */
 void readSDbinary_to_struct();
 
+/** @brief Read time and GPS data and save it in a buffer for Iridium sending in Recovery cycle */
+void readGPS_to_buffer();
+
   
 /* ---------- Functions related to the RTC DS3231 Adafruit ----------*/
+
+void init_RTC();
+
 /** @brief Reads the RTC clock and writes to useful variables */
 void reading_rtc();
 
-/** @brief Manually initializes hour:minute:seconds of the RTC clock */  
-void set_time_rtc(byte hour, byte min, byte sec);
-
-/** @brief Manually initializes the day/month/year date of the RTC clock
+/** @brief Manually initializes the date of the RTC clock
   *
   * @param day_of_month Day number in the month
   * @param day_of_weeks Day of the week number (1-7)
@@ -168,7 +175,7 @@ void set_time_rtc(byte hour, byte min, byte sec);
   * 
   *  Example : set_date_rtc(20, 1, 2, 23); //Monday 20 February 2023
   */  
-void set_date_rtc(byte day_of_month, byte day_of_week, byte month, byte year);
+void set_rtc(int day, int month, int year, int hour, int min, int sec);
 
 /** @brief Initialize the date of the RTC via GPS data */  
 void set_rtc_by_gps();
@@ -179,6 +186,9 @@ void set_rtc_by_gps();
   * @return 1 if RTC has been correctly initialised, 0 otherwise
   */  
 int check_rtc_set();
+
+/** @brief Get UnixTime used for counter */ 
+int get_unix_time();
 
 
 /* ---------- Functions related to INA219 current sensor ----------*/
@@ -193,10 +203,12 @@ void init_iridium();
 void print_iridium_infos();
 
 /** @brief Send text data buffer by Iridium module */
-void send_text_iridium();
+void sendreceive_text_iridium();
 
 /** @brief Send binary data buffer by Iridium module */
-void send_binary_iridium();
+void sendreceive_binary_iridium();
+
+void receive_iridium();
 
 /* ---------- Annex functions ----------*/
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
