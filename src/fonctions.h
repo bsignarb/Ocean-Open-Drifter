@@ -45,7 +45,7 @@ using namespace std;
 #define FRAME_NUMBER 14  // Number of frames concatenation for sending Iridium (340 bytes max)
 
 extern bool sending_ok;
-extern uint8_t switch_state;
+extern uint8_t switch_state;  // To switch state if MT message tell us
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
@@ -132,7 +132,9 @@ void print_coord_gps();
 /** @brief Returns date and time if valid frame | Used in scanning_gps() */
 void print_date_gps();
 
-  
+/** @brief Returns true if GPS signal is available, return false if not */
+bool gps_available();
+ 
 /* ---------- Functions related to the SD card and the config file ----------*/
 /** @brief Initializes and tests the SD card */
 void init_sd();
@@ -202,13 +204,26 @@ void init_iridium();
 /** @brief Give informations about Iridium module (firmware version + signal quality) */
 void print_iridium_infos();
 
-/** @brief Send text data buffer by Iridium module */
-void sendreceive_text_iridium();
+/** @brief Send text data with GPSBuffer by Iridium module in RECOVERY cycle (MO message)
+ *         and receive data with receive_buffer (MT message)
+*/
+void sendreceive_recovery_iridium();
 
-/** @brief Send binary data buffer by Iridium module */
-void sendreceive_binary_iridium();
+/** @brief Send binary data with buffer_read_340 by Iridium module in DEPLOYED cycle (MO message)
+ *         and receive data with receive_buffer (MT message)
+*/
+void sendreceive_deployed_iridium();
 
+/** @brief Send text data buffer by Iridium module 
+ *  @param text Text to send (between " ")
+*/
+void send_text_iridium(char text[50]);
+
+/** @brief Receive data with receive_buffer (MT message) */
 void receive_iridium();
+
+/** @brief For multitask and to continue actions even when sending with Iridium */
+bool ISBDCallback();
 
 /* ---------- Annex functions ----------*/
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
@@ -223,19 +238,33 @@ void scanner_i2c_adress();
 /** @brief Flashes the LED on a given number of cycles and at a given frequency (in seconds) */  
 void led_blinkled(int nbr, int freq);
 
-/** @brief General sleepiness */  
-void all_sleep();
+/** @brief General sleepiness 
+ *  @param sleeping_time Time to sleep (in seconds)
+*/  
+void all_sleep(int sleeping_time);
 
 /** @brief General wake up */  
 void all_wakeup();
 
 
 /* ---------- State machine functions ----------*/
+
+/** @brief Initialization mode of the sensors and internal checks / Sleeping mode possible (security if no GPS signal for example) */  
 void init_cycle();
-/** @brief Fonction provisoire : cycle de mesure, enchainement d'autres fonctions */  
+
+/** @brief Classic acquisition mode in deployment */  
 void deployed_cycle();
+
+/** @brief Mode with more frequent acquisition/transmission during recovery phases */  
 void recovery_cycle();
+
+/** @brief Emergency mode in case of problem (battery, humidity, inconsistent values...) */ 
+void emergency_cycle();
+
+/** @brief Init test mode */ 
 void test_cycle_init();
+
+/** @brief Test mode */ 
 void test_cycle();
 
 #endif

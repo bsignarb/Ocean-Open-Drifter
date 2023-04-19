@@ -2,16 +2,16 @@
 
 extern TSYS01 sensor_fastTemp;                                    // External declaration of the BlueRobotics temperature sensor
 enum :byte {INIT, DEPLOYED, RECOVERY, COM, EMERGENCY} state_mode; // State machine to switch mode
-uint8_t switch_state = 0;
-bool init_first_cycle = 0;                                        // Differentiates first cycle of the Init from the following ones 
+uint8_t switch_state = 0;                                         // To switch state if MT message tell us           
 int debug_mode_main = 1;                                          // Sends important informations to the serial monitor
+bool first_time_emergency = true;                                 // To send emergency Iridium message only one time
+int waiting_time = 0, waiting_counter1, waiting_counter2;         // How long has GPS been unavailable
 
 int average_sending_time = 120;                                   // Default average sending time of 2 minutes = 120 seconds 
 int margin_time = FRAME_NUMBER;                                   // FRAME_NUMBER seconds margin time (1sec min) for delay between each Iridium sending 
-int delay_between_datalogging, counter1, counter2, last_sending_time = 120;
-extern bool sending_ok;
-int test_isbd_callback = 0;
-
+int delay_between_datalogging, counter1, counter2, last_sending_time = 120; // Delay calculation between each acquisition (according to the previous sending time)  
+extern bool sending_ok;                                           // For Iridium => continue to send same buffer until it's sent (to avoid timeout and data lost)
+bool first_init_passed = false;                                   // Differentiates first cycle of the Init from the following ones (and to know when first init succeeded for ISBDCallback() function)
 
 void setup() {
   Serial.begin(115200);      // Start the console serial port 
@@ -24,39 +24,33 @@ void loop() {
     case INIT :              // Waiting state : pass in DEPLOYED mode as soon as the GPS has found its position
       if(debug_mode_main) Serial.println("--- Case INIT ---");
       init_cycle();
-      // TODO : Wait until GPS has found its position, if it don't found in a certain time go to other state
-      //test_cycle_init();  
-      
-      state_mode = DEPLOYED; // Change to DEPLOYED state
+      //test_cycle_init();
+
+      // Wait until GPS has found its position. If it doesn't found in a certain time, go to sleep to save battery life
+      waiting_time = 0;
+      waiting_counter1 = get_unix_time();          
+      while((gps_available() == false) && (waiting_time < 300) ){  // While GPS not available and waiting_time < 5 minutes => Do nothing, just wait until one of the conditions is true
+        waiting_counter2 = get_unix_time();
+        waiting_time = waiting_counter2 - waiting_counter1;        // Calculate waiting time
+        if(debug_mode_main) Serial.print("waiting time : ");       // Test (to delete)
+        if(debug_mode_main) Serial.println(waiting_time);  
+      }   
+      if(waiting_time >= 300) state_mode = INIT;                   // If GPS not available since more than 5 minutes => Change to INIT state (2nd part for sleeping)
+      else                    state_mode = DEPLOYED;               // GPS is available => Change to DEPLOYED state
       break;
 
-    case DEPLOYED :          // Standard acquisition cycles
+    case DEPLOYED :                                                // Standard acquisition cycles
       if(debug_mode_main) Serial.println("--- Case DEPLOYED ---");
       deployed_cycle();
       //test_cycle();
-
-      // TODO : Condition pour passer en mode RECOVERY
-      //        Condition pour passer en mode COM
-      
-      if(get_voltage() < 2.9 && get_voltage() > 0.5){    // Low battery level
-        if(debug_mode_main){
-          Serial.print("Low battery level : ");
-          Serial.print(get_voltage());
-          Serial.println("V\n");
-        }
-        state_mode = EMERGENCY;                          // Change to EMERGENCY state
-      }
       break;
 
-    case RECOVERY :                                      // More frequent cycles
+    case RECOVERY :                                                // More frequent cycles
       if(debug_mode_main) Serial.println("--- Case RECOVERY ---");
       recovery_cycle();
-      
-      // TODO : Condition pour passer en mode DEPLOYED
-      state_mode = RECOVERY; 
       break;
 
-    case COM : // Really useful ?
+    case COM :                                                     // Still really useful ?
       if(debug_mode_main) Serial.println("--- Case COM ---");
       // TODO : Envoi Iridium de la trame datachain 
       //        Conditions pour repasser en mode DEPLOYED ou RECOVERY (gestion du lien descendant)
@@ -65,28 +59,54 @@ void loop() {
 
     case EMERGENCY :
       if(debug_mode_main) Serial.println("--- Case EMERGENCY ---");
-
-      if(get_voltage()>2.9){    // Good battery level back
+      emergency_cycle();
+      if(get_voltage() > 2.95){                                    // Good battery level back
+        state_mode = DEPLOYED;                                     // Change to DEPLOYED state
         if(debug_mode_main){
           Serial.print("Battery level good again : ");
           Serial.print(get_voltage());
           Serial.println("V\n");
-        }
-        state_mode = DEPLOYED;  // Change to DEPLOYED state
+        }                                      
       }
       delay(1000);
       break;
   }
   if(debug_mode_main) Serial.println("\n----------------------------------------------------------------------------\n");
 
-  if(switch_state == 49) state_mode = INIT;       // Change to INIT state (because of Iridium MT message) (dec 49 = char 1)
-  if(switch_state == 50) state_mode = DEPLOYED;   // Change to DEPLOYED state (because of Iridium MT message) (dec 50 = char 2)
-  if(switch_state == 51) state_mode = RECOVERY;   // Change to RECOVERY state (because of Iridium MT message) (dec 51 = char 3)
-  if(switch_state == 52) state_mode = EMERGENCY;  // Change to EMERGENCY state (because of Iridium MT message) (dec 52 = char 4)
+  // ------------------------------------------ STATE CHANGES CONDITIONS ----------------------------------------------------- //
+  // GPS position : Verify if GPS position is available. If it doesn't found in a certain time, go to sleep to save battery life
+  waiting_time = 0;
+  waiting_counter1 = get_unix_time();          
+  while((gps_available() == false) && (waiting_time < 300) ){  // While GPS not available and waiting_time < 5 minutes => Do nothing, just wait until one of the conditions is true
+    waiting_counter2 = get_unix_time();
+    waiting_time = waiting_counter2 - waiting_counter1;        // Calculate waiting time
+    Serial.print("waiting time : "); Serial.println(waiting_time);  // Test to delete
+  }   
+  if(waiting_time >= 300){                                      // If GPS not available since more than 5 minutes => Go to sleep for a certain time to save battery life 
+    state_mode = INIT;                                          // Change to INIT state (2nd part for sleeping)
+  } 
+  else{                                                        // GPS is available
+    state_mode = DEPLOYED;                                     // Change to DEPLOYED state
+  }
+  // Iridium MT messages
+  if(switch_state == 49) state_mode = INIT;        // Change to INIT state (because of Iridium MT message) (dec "49" = char "1")
+  if(switch_state == 50) state_mode = DEPLOYED;    // Change to DEPLOYED state (because of Iridium MT message) (dec "50" = char "2")
+  if(switch_state == 51) state_mode = RECOVERY;    // Change to RECOVERY state (because of Iridium MT message) (dec "51" = char "3")
+  if(switch_state == 52) state_mode = EMERGENCY;   // Change to EMERGENCY state (because of Iridium MT message) (dec "52" = char "4")
+  
+  // Battery voltage
+  if(get_voltage() < 2.9 && get_voltage() > 0.5){  // Low battery level
+    state_mode = EMERGENCY;                        // Change to EMERGENCY state
+    if(debug_mode_main){
+      Serial.print("Low battery level : ");
+      Serial.print(get_voltage());
+      Serial.println("V\n");
+    }
+  }
 }
 
 void init_cycle(){
-  if(init_first_cycle == 0){ // First Init cycle
+  if(first_init_passed == false){ // First Init cycle
     pinMode(LED_BUILTIN, OUTPUT); 
     //pinMode(16, OUTPUT);   // Declare powerfull led port
     initEC();                // Init conductivity sensor
@@ -100,17 +120,17 @@ void init_cycle(){
     init_iridium();          // Init Iridium module
     //init_ina219();         // Init INA219 (current sensor)
 
-    init_first_cycle = 1;
+    first_init_passed = true;
   }
   else{                      // Following Init cycles for sleeping mode
-    // TODO : sleeping if no GPS signal
-    //all_sleep();
-    // TODO : wait a certain time or test if GPS signal is back to return in the "normal" state
+    all_sleep(120);          // Sleeping for 2 minutes (120 seconds) because of no GPS signal
+    //all_wakeup();
   }
 }
 
 void deployed_cycle(){
   //--- Datalogging ---//
+  first_time_emergency = true;
   digitalWrite(2, LOW);                // Iridium modem sleeping
   for(int cycle_number=1; cycle_number<=FRAME_NUMBER; cycle_number++){  // FRAME_NUMBER times acquisition before Iridium sending
     if(debug_mode_main){
@@ -136,15 +156,12 @@ void deployed_cycle(){
   readSDbinary_to_struct();            // Read datalog file in a dataframe_read structure for Iridium sending
 
   //--- Iridium sending ---//
-  // TODO : Make sending non-blocking, to continue the acquisitions (with bool ISBDCallback()?)
-  //        Necessary to switch in COM state ?
-  test_isbd_callback = 1;              // Test for ISBDCallaback() for multitask (to delete soon)
   counter1 = get_unix_time();          // Counter1 to calculate the Iridium sending time 
   print_iridium_infos();               // Iridium modem informations
   sending_ok = false;
-  /*while(sending_ok == false)           // Continue to send same buffer until it's sent (to avoid timeout and data lost)
+  /*while(sending_ok == false)         // Continue to send same buffer until it's sent (to avoid timeout and data lost)
   {
-    sendreceive_binary_iridium();      // Sending data with buffer_read_340 (MO message) AND receiving data with receive_buffer (MT message)
+    sendreceive_deployed_iridium();    // Sending data with buffer_read_340 (MO message) AND receiving data with receive_buffer (MT message)
   }*/
   counter2 = get_unix_time();               // Counter2 to calculate the Iridium sending (and receive?) time 
   last_sending_time = counter2 - counter1;  // Iridium sending (and receive?) time 
@@ -157,7 +174,7 @@ void deployed_cycle(){
 }
 
 void recovery_cycle(){
-  //--- Datalogging - Even in Recovery cycle we continue acquisitions and save it to SD card ---// 
+  //--- Datalog - Even in Recovery cycle we continue acquisitions and save it to SD card ---// 
   mesure_cycle_to_datachain();   // Start a measurement cycle and stores the measured parameters in datachain
   save_datachain_to_sd();        // Writes the content of datachain to the dataFilename file on the SD card
 
@@ -167,9 +184,17 @@ void recovery_cycle(){
   sending_ok = false;
   while(sending_ok == false)     // Continue to send same buffer until it's sent (to avoid timeout and data lost)
   {
-    sendreceive_text_iridium();  // Send directly time and position
+    //sendreceive_recovery_iridium();  // Send directly time and position
+    sendreceive_deployed_iridium();    // Sending data with buffer_read_340 (MO message) AND receiving data with receive_buffer (MT message)
   }
-  delay(10000);                  // Wait for 10s before next acquisition 
+  delay(20000);                  // Wait for 10s before next acquisition 
+}
+
+void emergency_cycle(){
+  if(first_time_emergency == true){
+    send_text_iridium("WARNING - LOW VOLTAGE");  // Only one time Iridium sending to inform low voltage battery 
+    first_time_emergency = false;
+  } 
 }
 
 void test_cycle_init(){
@@ -187,13 +212,42 @@ void test_cycle(){
   receive_iridium();
   delay(10000);
 }
-/*
+
 bool ISBDCallback()
 {
-  //if(test_isbd_callback == 1){
-    //unsigned ledOn = (millis() / 1000) % 2;  // Blink LED every second
-    //digitalWrite(LED_BUILTIN, ledOn ? HIGH : LOW);
-    //return true;
-  //}
+  //unsigned ledOn = (millis() / 1000) % 2;  // Every second LED blinking 
+  //digitalWrite(LED_BUILTIN, ledOn ? HIGH : LOW);
+
+  //--- Datalog - Even when sending with Iridium we continue acquisitions and save it to SD card ---// 
+  if(first_init_passed == true){   // Do when first init succeeded
+    mesure_cycle_to_datachain();   // Start a measurement cycle and stores the measured parameters in datachain
+    save_datachain_to_sd();        // Writes the content of datachain to the dataFilename file on the SD card
+    delay(1000);
+  }
+
+  return true;
 }
-*/
+
+
+#if DIAGNOSTICS
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    Serial.write(c);
+  }
+
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    Serial.write(c);
+  }
+#else 
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+#endif
+

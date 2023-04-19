@@ -11,7 +11,7 @@ int debug_mode2 = 0;                     // Sends less important informations to
 int nbrMes = 3;                          // Number of measurements to perform (then redefined by the config file)
 int bootCount = 0;                       // Useful to have a 1st cycle of writing in file different from the following cycles
 int TIME_TO_SLEEP = 40;                  // Duration between each cycle (deep sleep and wakeup)
-extern uint8_t switch_state;
+extern uint8_t switch_state;             // To switch state if MT message tell us
 
 /*---------- Carte Atlas EC EZO ----------*/
 #define ecAddress 100                    // Board address definition for I2C communication
@@ -46,7 +46,7 @@ char outBuffer[60];        // To be removed shortly
 String outBuffer_string;   // To be removed shortly
 byte outBuffer_byte[55];   // To be removed shortly
 
-char GPSBuffer[60];
+char GPSBuffer[50];
 int reading_pos = 0;
 
 typedef struct dataframe   // Structure creation for data storage
@@ -99,13 +99,13 @@ HardwareSerial ssIridium(1);       // RockBLOCK serial port on 10 5 (Hardware ve
 IridiumSBD modem(ssIridium, 2);    // RockBLOCK Object creation with SLEEP pin on 2
 int signalQuality = -1;
 int err;
-char version[12];
-bool sending_ok = false;
+char version[12];                  // Store the Iridium modem version
+bool sending_ok = false;           // For Iridium => continue to send same buffer until it's sent (to avoid timeout and data lost) 
 const int commut_irid = 2;         // Rockblock sleeping pin
 
 static bool messageSent = false;
-uint8_t receive_buffer[200];
-size_t receive_buffer_size = sizeof(receive_buffer);
+uint8_t receive_buffer[200];    
+size_t receive_buffer_size = 200;
 
 /* ------------------------------------------------- FONCTIONS ------------------------------------------------------------------*/
 
@@ -149,17 +149,25 @@ void led_blinkled(int nbr, int freq) {   // freq en sec = freq interval between 
   }
 }
 
-void all_sleep(){
-  if(debug_mode) Serial.println("\n--- All sleep ---\n");
+void all_sleep(int sleeping_time){
+  if(debug_mode){
+    Serial.print("\n--- All sleep for ");
+    Serial.print(sleeping_time);
+    Serial. println(" seconds ---\n");
+  } 
+
   digitalWrite(commut_irid, LOW);        // Iridum modem sleeping
   digitalWrite(commut_EC, LOW);          // EC sensor sleeping
   digitalWrite(commut_gps, LOW);         // GPS sleeping
   digitalWrite(LED_BUILTIN, LOW);        // Turn off the built-in led
   gpio_hold_en(GPIO_NUM_2);              // Keep off the built-in led during deep sleep
   //neogps.println("$PMTK161,0*28");     // Command line to put GPS in sleeping mode
-  //esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR); // Set deep sleep duration
-  //esp_deep_sleep_start();              // Switch to deep sleep mode
-  delay(500);                       
+  esp_sleep_enable_timer_wakeup(sleeping_time * uS_TO_S_FACTOR); // Set deep sleep duration
+  Serial.flush();
+  esp_deep_sleep_start();              // Switch to deep sleep mode
+
+  
+  //delay(1000*sleeping_time);             // Sleep during sleeping_time (in seconds)          
 }
 
 void all_wakeup(){
@@ -310,10 +318,7 @@ void scanning_gps_coord(){
   {
     while (neogps.available()) // If gps data available
     {
-      if (gps.encode(neogps.read()))
-      {
-        newData = true;
-      }
+      if (gps.encode(neogps.read())) newData = true;
     }
   }
   if(newData == true)   
@@ -399,6 +404,36 @@ void print_date_gps(){
     if(debug_mode) Serial.println("GPS time is not valid");
   }  
 
+}
+
+bool gps_available(){
+  boolean newData = false;
+  for (unsigned long start = millis(); millis() - start < 1000;)
+  {
+    while (neogps.available()) // If gps data available
+    {
+      if (gps.encode(neogps.read())) newData = true;
+    }
+  }
+  if(newData == true)   
+  {
+    newData = false;
+    if (gps.location.isValid() == 1)
+    {
+      if(debug_mode) Serial.println("GPS location is valid");
+      return true;
+    }
+    else
+    {
+      if(debug_mode) Serial.println("GPS location is not valid");
+      return false;
+    }  
+  }
+  else
+  {
+    if(debug_mode) Serial.println("No Data detected, can't communicate with GPS...");
+    return false;
+  }  
 }
 
 /* ---------- Functions related to the SD card and the config file ----------*/
@@ -834,7 +869,7 @@ void print_iridium_infos(){
      Serial.println(err);
      return;
   }
-  Serial.print("Firmware Version is ");
+  Serial.print("---------------------------------------------------- Firmware Version is ");
   Serial.print(version);
   Serial.println(".");
 
@@ -849,17 +884,20 @@ void print_iridium_infos(){
     return;
   }
 
-  Serial.print("On a scale of 0 to 5, signal quality is currently ");
+  Serial.print("---------------------------------------------------- On a scale of 0 to 5, signal quality is currently ");
   Serial.print(signalQuality);
   Serial.println(".");
 }
 
-void sendreceive_text_iridium(){
+void sendreceive_recovery_iridium(){
   digitalWrite(2, HIGH);                                                              // Waking up modem
   delay(500);
   if (debug_mode) Serial.print("Trying to send the text message.  This might take several minutes.\r\n");
-  //int err = modem.sendSBDText(GPSBuffer);                                           // Iridium sending command only
-  int err = modem.sendReceiveSBDText(GPSBuffer, receive_buffer, receive_buffer_size); // Iridium sending and receiving command 
+  receive_buffer_size = sizeof(receive_buffer);
+  for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                                            // Clearing receive buffer
+  //int err = modem.sendSBDText(GPSBuffer);                                                                      // Iridium sending command only
+  int err = modem.sendReceiveSBDText(GPSBuffer, receive_buffer, receive_buffer_size);                            // Iridium sending and receiving command 
+  //int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size); // Test to use only 1 credit instead of 7 for buffer_read_340
   if (err != ISBD_SUCCESS)
   {
     if(debug_mode){
@@ -879,11 +917,9 @@ void sendreceive_text_iridium(){
       Serial.print("Messages remaining to be retrieved: ");
       Serial.println(modem.getWaitingMessageCount());
     }
-
     switch_state = receive_buffer[0];                                                 // To switch state if MT message tell us
     sending_ok = true;
   }
-
   digitalWrite(2, LOW);                                                               // Modem sleeping
 
   #if DIAGNOSTICS
@@ -899,12 +935,15 @@ void sendreceive_text_iridium(){
   #endif
 }
 
-void sendreceive_binary_iridium(){
+void sendreceive_deployed_iridium(){
   digitalWrite(2, HIGH);                                                   // Waking up modem
   delay(500);
-  if (debug_mode) Serial.print("Trying to send the binary message.  This might take several minutes.\r\n");
-  //int err = modem.sendSBDBinary(buffer_read_340, sizeof(buffer_read_340));                                           // Iridium sending command only
-  int err = modem.sendReceiveSBDBinary(buffer_read_340, sizeof(buffer_read_340), receive_buffer, receive_buffer_size); // Iridium sending and receiving command 
+  if (debug_mode) Serial.print("---------------------------------------------- Trying to send the binary message.  This might take several minutes.\r\n");
+  receive_buffer_size = sizeof(receive_buffer);
+  for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                                                    // Clearing buffer
+  //int err = modem.sendSBDBinary(buffer_read_340, sizeof(buffer_read_340));                                             // Iridium sending command only
+  //int err = modem.sendReceiveSBDBinary(buffer_read_340, sizeof(buffer_read_340), receive_buffer, receive_buffer_size); // Iridium sending and receiving command 
+  int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size);           // Test to use only 1 credit instead of 7 for buffer_read_340
 
   //if(debug_mode) Serial.print("Receive messages detected : ");
   //if(debug_mode) Serial.println(modem.getWaitingMessageCount());
@@ -912,13 +951,13 @@ void sendreceive_binary_iridium(){
   if (err != ISBD_SUCCESS)
   {
     if(debug_mode){
-      Serial.print("Transmission failed with error code ");
+      Serial.print("---------------------------------------------------- Transmission failed with error code ");
       Serial.println(err);
       if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
     }
   }
   else{ 
-    if(debug_mode) Serial.println("Binary buffer sending Ok\n"); 
+    if(debug_mode) Serial.println("---------------------------------------------------- Binary buffer sending Ok\n"); 
     if(debug_mode){                                                                     // Receive buffer serial print
       Serial.print("Inbound buffer size is ");
       Serial.println(receive_buffer_size);
@@ -985,4 +1024,36 @@ void receive_iridium(){
   }else{
     if(debug_mode) Serial.println("sendReceiveSBD No message detected");
   }
+}
+
+void send_text_iridium(char text[50]){
+  digitalWrite(2, HIGH);                                                              // Waking up modem
+  delay(500);
+  if (debug_mode) Serial.print("Trying to send the text message.  This might take several minutes.\r\n");
+  int err = modem.sendSBDText(text);                                                                      // Iridium sending command only
+  if (err != ISBD_SUCCESS)
+  {
+    if(debug_mode){
+      Serial.print("Transmission failed with error code ");
+      Serial.println(err);
+      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
+    }
+  }
+  else{ 
+    if(debug_mode) Serial.println("Text buffer sending Ok\n"); 
+    sending_ok = true;
+  }
+  digitalWrite(2, LOW);                                                               // Modem sleeping
+
+  #if DIAGNOSTICS
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+  #endif
 }
