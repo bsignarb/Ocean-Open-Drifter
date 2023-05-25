@@ -3,6 +3,8 @@
 
 /* ---------- Librarie calls ----------*/
 #include <Arduino.h>
+#include <SD.h>           // SD card
+#include <DebugLog.h>     // Log info
 #include <Wire.h>         // Enable I2C
 #include <SPI.h>          // Enable SPI
 #include <WiFi.h>
@@ -16,13 +18,12 @@
 #include <Ezo_i2c.h>      // include the EZO I2C library from https://github.com/Atlas-Scientific/Ezo_I2c_lib
 #include <Ezo_i2c_util.h> // brings in common print statements
 
+//#include <Adafruit_Sensor.h>
 #include "TSYS01.h"       // BlueRobotics temperature sensor
-#include <SD.h>           // SD card
-//#include <DS3231.h>       // RTC clock
 #include <RTClib.h>       // RTC clock
 #include <TinyGPS++.h>    // GPS
 #include <IridiumSBD.h>   // Iridium module
-//#include <Adafruit_INA219.h> // Voltage and current sensor
+#include <Adafruit_INA219.h> // Voltage and current sensor
 
 using namespace std;
 
@@ -32,20 +33,18 @@ using namespace std;
 
 /** Definition of the probe type. See function setting_ec_probe_type(double probeType) */
 #define PROBE_TYPE 1.0 
-  
-/** Definition of the parameters to be sent back from the Atlas EC EZO card (0 -> disabled / 1 -> enabled)
-*  See function void enable_ec_parameters(bool ec, bool tds, bool s, bool sg )
-*  For the moment only 1 possible parameter at a time 
-*/
-#define EC_ENABLED 1   // To be removed shortly
-#define TDS_ENABLED 0  // To be removed shortly
-#define SAL_ENABLED 0  // To be removed shortly
-#define SG_ENABLED 0   // To be removed shortly
 
-#define FRAME_NUMBER 14  // Number of frames concatenation for sending Iridium (340 bytes max)
+#define FRAME_NUMBER 10      // Number of frames concatenation for sending Iridium (340 bytes max)
+#define ACQUISITION_NUMBER 18 // Number of acquistions in each frame (= FRAME_DURATION / 20) (because one acquistion each 20 seconds)
+#define FRAME_DURATION 360   // Time of one frame acquisition (360 seconds = 6 minutes)
+
+#define DEBUGLOG_DEFAULT_FILE_LEVEL_TRACE  // Level to write in the Loginfo file
+#define DEBUGLOG_DEFAULT_LOG_LEVEL_TRACE   // Level to write in the Loginfo serial port
+
+#define DIAGNOSTICS false
 
 extern bool sending_ok;
-extern uint8_t switch_state;  // To switch state if MT message tell us
+extern uint8_t switch_state; // To switch state if MT message tell us
 
 /* ---------- Functions related to the Atlas EC EZO card ----------*/
 
@@ -53,16 +52,7 @@ extern uint8_t switch_state;  // To switch state if MT message tell us
 void initEC();
 
 /** @brief Mesure de conductivité
-  * Sends a read request to the EZO EC board and returns the measurement to the serial monitor
-  * according to the parameters allowed to be returned
-  * 
-  * Possible measures (pour le moment 1 seul paramètre possible à la fois) :
-  *   - Electrical conductivity
-  *   - Total dissolved solids
-  *   - Total dissolved solids
-  *   - Salinity
-  *   - Specific gravity of seawater
-  * To activate or not the parameters, see function void Cf #enable_ec_parameters(bool ec, bool tds, bool s, bool sg )  
+  * Sends a read request to the EZO EC board and returns the measurement to the serial monitor  
   */
 void mesureEC();
 
@@ -74,19 +64,6 @@ void mesureEC();
   *                    "K10"
   */  
 void setting_ec_probe_type(); 
-
-/** @brief Controls the active parameters at the output of the conductivity sensor
-  *   @param ec  => Electrical conductivity, 
-  *   @param tds => Total dissolved solids, 
-  *   @param sal => Salinity, 
-  *   @param sg  => Specific gravity of seawater
-  *
-  *  Constants to be modified defined in the header of functions.h (EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED)
-  *
-  *  @param Choix_possibles : "1" = enabled
-  *                           "0" = disabled
-  */
-void enable_ec_parameters(bool ec, bool tds, bool s, bool sg); 
   
 /** @brief Sends the command entered in parameter and returns on the serial port the answer of the sensor ec
   *  
@@ -139,9 +116,6 @@ bool gps_available();
 /** @brief Initializes and tests the SD card */
 void init_sd();
 
-/** @brief Flashes the LED to indicate an SD card error */  
-void errormessage_sd();
-
 /** @brief Reads the configuration file */
 void lecture_config();
 
@@ -149,16 +123,20 @@ void lecture_config();
 void refresh_config_values();
 
 /** @brief Starts a measurement cycle and stores the measured parameters in datachain */  
-void mesure_cycle_to_datachain();
+void calcul_and_filling_dataframe_write();
 
 /** @brief Writes the content of datachain to the dataFilename file on the SD card */  
-void save_datachain_to_sd();
+void save_dataframe_to_sd();
+
+void save_acquisition_to_sd();
 
 /** @brief Read datalog file in a dataframe_read structure and buffer_read_340 for Iridium sending */
 void readSDbinary_to_struct();
 
 /** @brief Read time and GPS data and save it in a buffer for Iridium sending in Recovery cycle */
 void readGPS_to_buffer();
+
+void store_data_in_arrays(int acquisition_number);
 
   
 /* ---------- Functions related to the RTC DS3231 Adafruit ----------*/
@@ -214,16 +192,18 @@ void sendreceive_recovery_iridium();
 */
 void sendreceive_deployed_iridium();
 
+void sendreceive_emergency_iridium();
+
 /** @brief Send text data buffer by Iridium module 
  *  @param text Text to send (between " ")
 */
 void send_text_iridium(char text[50]);
 
-/** @brief Receive data with receive_buffer (MT message) */
-void receive_iridium();
-
 /** @brief For multitask and to continue actions even when sending with Iridium */
 bool ISBDCallback();
+
+/** @brief Receive data with receive_buffer (MT message) */
+void receive_iridium();
 
 /* ---------- Annex functions ----------*/
 /** @brief Reads the voltage on the VBATT_PIN pin and returns the value
@@ -245,6 +225,9 @@ void all_sleep(int sleeping_time);
 
 /** @brief General wake up */  
 void all_wakeup();
+
+/** @brief Calculate Root Mean Square value of a size n array*/
+float rmsValue(float arr[], int n);
 
 
 /* ---------- State machine functions ----------*/

@@ -5,8 +5,9 @@ using namespace std;
 
 /*---------- General declarations ----------*/ 
 #define uS_TO_S_FACTOR 1000000ULL        // Conversion factor for micro seconds to seconds 
-int led_mode = 1;                        // Use the LED to indicate what's going on
-int debug_mode = 1;                      // Sends important informations to the serial monitor
+#define FRENCH_TIME 7200
+int led_mode = 0;                        // Use the LED to indicate what's going on
+bool debug_mode = false;                 // Sends important informations to the serial monitor
 int debug_mode2 = 0;                     // Sends less important informations to the serial monitor
 int nbrMes = 3;                          // Number of measurements to perform (then redefined by the config file)
 int bootCount = 0;                       // Useful to have a 1st cycle of writing in file different from the following cycles
@@ -49,12 +50,24 @@ byte outBuffer_byte[55];   // To be removed shortly
 char GPSBuffer[50];
 int reading_pos = 0;
 
+int tab_length = FRAME_DURATION/20; // Acquisition every 20 seconds
+
+float tab_lat[FRAME_DURATION/20];  
+float tab_lng[FRAME_DURATION/20];
+float tab_temp[FRAME_DURATION/20];
+float tab_cond[FRAME_DURATION/20];
+
+float lat_sum=0, lng_sum=0, temp_sum=0, cond_sum=0; 
+float lat_moy=0, lng_moy=0, temp_moy=0, temp_rms=0, cond_moy=0, cond_rms=0;
+
 typedef struct dataframe   // Structure creation for data storage
 {
-  float lat;
-  float lng;
-  float temp;
-  float cond;
+  float lat_moy;
+  float lng_moy;
+  float temp_moy;
+  float temp_rms;
+  float cond_moy;
+  float cond_rms;
   uint16_t y;
   uint8_t d;
   uint8_t mth;
@@ -69,11 +82,14 @@ uint8_t buffer_read[sizeof(dataframe_read)];                            // Binar
 uint8_t buffer_read_340[FRAME_NUMBER*sizeof(dataframe_read)];           // Binary reading file buffer for Iridium sending (14 dataframes concatenation)
 
 const int cspin_SD=15;                                                  // SPI bus selection signal
-String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd ,clef_test; // config.txt file variables
+String id_logger, number_measures, delay_batch, led_mode_sd, debug_mode_sd, clef_test; // config.txt file variables
 File confFile;                                                          // To read the config.txt file
+File incrementfile;                                                     // Storage file with number of last file created (log and data) to increment
+int d_int = 0;                                                          // Value to change and increment file names 
 String fichier_config = "/config.txt";                                  // Name of the configuration file
 String dataFilename = "/datalog.txt";                                   // Text data file name
 String binFilename = "/binfile.bin";                                    // Binary data file name
+String logFilename = "/log.txt";                                        // Log info file name
 
 /*---------- RTC DS3231 Adafruit ----------*/
 RTC_DS3231 rtc;
@@ -86,10 +102,10 @@ String second_rtc, minute_rtc, hour_rtc, day_rtc, month_rtc, year_rtc;  // For d
 String datenum_rtc;                                                     // For date format in 1 writing (datenum = "day/month/year")
 String timenum_rtc;                                                     // For date format in 1 writing(datetime = "hour:minute:second")
 String datetime_rtc;       
-uint8_t drifting_time;                                                      // Drifting between RTC and GPS seconds to know if RTC must be adjust or not
+uint8_t drifting_time;                                                  // Drifting between RTC and GPS seconds to know if RTC must be adjust or not
 
 /*---------- INA219 current sensor Adafruit ----------*/
-//Adafruit_INA219 ina219;
+Adafruit_INA219 ina219;
 
 /*---------- IridiumSBD Rockblock 9603 ----------*/
 #define RXD_IRID 10                // UART ports declaration for communication with Rockblock
@@ -103,7 +119,6 @@ char version[12];                  // Store the Iridium modem version
 bool sending_ok = false;           // For Iridium => continue to send same buffer until it's sent (to avoid timeout and data lost) 
 const int commut_irid = 2;         // Rockblock sleeping pin
 
-static bool messageSent = false;
 uint8_t receive_buffer[200];    
 size_t receive_buffer_size = 200;
 
@@ -113,6 +128,7 @@ size_t receive_buffer_size = 200;
 float get_voltage(){
   float vbatt = (analogRead(VBATT_PIN) * 3.30) / 4095.00;
   return vbatt;
+  LOG_INFO(get_unix_time(),"Reading battery voltage :",vbatt,"\r");
 }
 
 void scanner_i2c_adress()
@@ -138,25 +154,21 @@ void scanner_i2c_adress()
   Serial.print ("Found ");      
   Serial.print (count, DEC);             // Numbers of devices found
   Serial.println (" device(s).\n");
+  LOG_INFO(get_unix_time(),"Found :",count,"I2C devices\r");
 }
 
 void led_blinkled(int nbr, int freq) {   // freq en sec = freq interval between to light on
   for (int i=0; i<nbr; i++) {
-    //digitalWrite(greenled, HIGH); 
+    digitalWrite(LED_BUILTIN, HIGH); 
     delay(freq/2);
-    //digitalWrite(greenled, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
     delay(freq/2);
   }
 }
 
 void all_sleep(int sleeping_time){
-  if(debug_mode){
-    Serial.print("\n--- All sleep for ");
-    Serial.print(sleeping_time);
-    Serial. println(" seconds ---\n");
-  } 
-
-  digitalWrite(commut_irid, LOW);        // Iridum modem sleeping
+  LOG_INFO(get_unix_time(),"All sleep for", sleeping_time,"seconds \r");
+  //digitalWrite(commut_irid, LOW);        // Iridum modem sleeping
   digitalWrite(commut_EC, LOW);          // EC sensor sleeping
   digitalWrite(commut_gps, LOW);         // GPS sleeping
   digitalWrite(LED_BUILTIN, LOW);        // Turn off the built-in led
@@ -164,14 +176,13 @@ void all_sleep(int sleeping_time){
   //neogps.println("$PMTK161,0*28");     // Command line to put GPS in sleeping mode
   esp_sleep_enable_timer_wakeup(sleeping_time * uS_TO_S_FACTOR); // Set deep sleep duration
   Serial.flush();
-  esp_deep_sleep_start();              // Switch to deep sleep mode
+  esp_deep_sleep_start();                // Switch to deep sleep mode
 
-  
-  //delay(1000*sleeping_time);             // Sleep during sleeping_time (in seconds)          
+  //delay(1000*sleeping_time);           // Sleep during sleeping_time in seconds (decomment the line if no uC deep sleep)         
 }
 
 void all_wakeup(){
-  if(debug_mode) Serial.println("\n--- All wake up ---\n");
+  LOG_INFO(get_unix_time(),"All wake up\r");
   digitalWrite(commut_EC, HIGH);         // EC sensor waking up
   digitalWrite(commut_gps, HIGH);        // GPS waking up
   digitalWrite(commut_irid, HIGH);       // Iridium modem waking up
@@ -179,61 +190,35 @@ void all_wakeup(){
   delay(500);   
 }
 
+float rmsValue(float arr[], int n)
+{
+    float square = 0;
+    float mean = 0.0, root = 0.0;
+    // Calculate square.
+    for (int i = 0; i < n; i++) {
+        square += pow(arr[i], 2);
+    }
+    // Calculate Mean.
+    mean = (square / (float)(n));
+    // Calculate Root.
+    root = sqrt(mean);
+    return root;
+}
+
 /* ---------- Functions related to Atlas EC EZO sensor ----------*/
 void initEC(){
   pinMode(commut_EC, OUTPUT);   
   digitalWrite(commut_EC, HIGH); // Switch on power supply of the EC ezo sensor
+  LOG_INFO(get_unix_time(),"Init EC sensor\r");
 }
 
 void mesureEC(){
   EC.send_read_cmd(); // Sends a read request to the sensor
-  delay(1000);
-  // Depends on which parameter will be returned
-  if (EC_ENABLED){                                 // Conductivity
-    EC.receive_read_cmd(); 
-    conductivity = EC.get_last_received_reading(); // Returns the last sensor reading in float
-    conduct_int = (uint16_t) conductivity;         // Conversion in uint16_16 to save space for Iridium sending
-    if(debug_mode){
-      Serial.print("Conductivité : ");
-      Serial.print(conductivity);
-      //receive_and_print_reading(EC); 
-      Serial.print(" uS/cm");
-    }
-  }
-  else if (TDS_ENABLED){                           // Total dissolved solids
-    EC.receive_read_cmd(); 
-    total_dissolved_solids = EC.get_last_received_reading();
-    tds_int = (uint16_t) total_dissolved_solids;
-    if(debug_mode){
-      Serial.print("Total dissolved solids : ");
-      Serial.print(total_dissolved_solids);
-      //receive_and_print_reading(EC); 
-      Serial.print(" ppm");
-    }
-  }
-  else if (SAL_ENABLED){                           // Salinity
-    EC.receive_read_cmd();
-    salinity = EC.get_last_received_reading();
-    sal_int = (uint16_t) salinity;
-    if(debug_mode){
-      Serial.print("Salinity : ");
-      Serial.print(salinity);
-      //receive_and_print_reading(EC); 
-      Serial.print(" PSU (between 0.00 - 42.00)");
-    }
-  }
-  else if (SG_ENABLED){                            // Sea water gravity
-    EC.receive_read_cmd();
-    seawater_gravity = EC.get_last_received_reading();
-    swg_int = (uint16_t) seawater_gravity;
-    if(debug_mode){
-      Serial.print("Sea water gravity : ");
-      Serial.print(seawater_gravity);
-      //receive_and_print_reading(EC); 
-      Serial.print(" (between 1.00 - 1.300)");
-    }
-  }
-  if(debug_mode) Serial.println();
+  delay(600);
+  EC.receive_read_cmd(); 
+  conductivity = EC.get_last_received_reading(); // Returns the last sensor reading in float
+  conduct_int = (uint16_t) conductivity;         // Conversion in uint16_16 to save space for Iridium sending
+  LOG_INFO(get_unix_time(),"Reading conductivity :", conductivity);
 }
 
 void setting_ec_probe_type() { 
@@ -244,29 +229,11 @@ void setting_ec_probe_type() {
   if(debug_mode2) Serial.println();
 }
 
-void enable_ec_parameters(bool ec, bool tds, bool s, bool sg ) { 
-  EC.send_cmd_with_num("O,EC,", ec); 
-  delay(ecDelay);
-  EC.send_cmd_with_num("O,TDS,", tds);
-  delay(ecDelay);
-  EC.send_cmd_with_num("O,S,", s);
-  delay(ecDelay);
-  EC.send_cmd_with_num("O,SG,", sg);
-  delay(ecDelay);
-  EC.send_cmd("O,?");
-  delay(ecDelay);
-  if(debug_mode2){
-    Serial.print("Parameters enabled : ");
-    receive_and_print_response(EC);
-  }
-}
-
 void send_ec_cmd_and_response(char cmd[]) { 
   EC.send_cmd((const char*)cmd);
   delay(ecDelay);
-  if(debug_mode) Serial.print("Response : ");
+  LOG_INFO(get_unix_time(),"Response\r");
   receive_and_print_response(EC); 
-  Serial.println();
 }
 
 /* ---------- Functions related to BlueRobotics temperature sensor ----------*/
@@ -274,11 +241,7 @@ void mesure_temp(){
   sensor_fastTemp.read();
   fast_temp = sensor_fastTemp.temperature();
   delay(200);
-  if (debug_mode) {
-    Serial.print("Temperature : ");
-    Serial.print(fast_temp);
-    Serial.println(" °C");
-  }
+  LOG_INFO(get_unix_time(),"Reading temperature :",fast_temp," °C\r");
 }
 
 /* ---------- Functions related to Grove GPS v1.2 + atomic clock related functions ----------*/
@@ -287,6 +250,7 @@ void init_gps(){
   neogps.begin(9600);                         // begin GPS software serial
   pinMode(commut_gps, OUTPUT); 
   digitalWrite(commut_gps, HIGH);
+  LOG_INFO(get_unix_time(),"Init GPS\r");
 }
 
 void scanning_gps_time(){
@@ -308,7 +272,7 @@ void scanning_gps_time(){
   }
   else
   {
-    if(debug_mode) Serial.println("No Data detected");
+    LOG_ERROR(get_unix_time(),"No GPS time data detected\r");
   }  
 }
 
@@ -328,8 +292,9 @@ void scanning_gps_coord(){
   }
   else
   {
-    if(debug_mode) Serial.println("No Data detected");
+    LOG_ERROR(get_unix_time(),"No GPS coord data detected\r");
   }  
+  
 }
 
 void print_coord_gps()
@@ -338,28 +303,11 @@ void print_coord_gps()
   {
     lattitude = gps.location.lat(); 
     longitude = gps.location.lng();
-    nb_satellites = gps.satellites.value();
-    altitude = gps.altitude.meters();
-    vitesse = gps.speed.kmph();
-
-    std::stringstream stream_lat;
-    std::stringstream stream_lng;
-    stream_lat << std::fixed << std::setprecision(6) << lattitude; // Set lattitude precision to 6 digits (2 as default in char variable)
-    stream_lng << std::fixed << std::setprecision(6) << longitude; // Set longitude precision to 6 digits (2 as default in char variable)
-    lat = stream_lat.str();
-    lng = stream_lng.str();
-
-    if(debug_mode){
-      Serial.print("Donnees GPS : ");
-      Serial.print("lattitude : ");
-      Serial.print(&(lat[0]));        // Pass from std string to char value (to make it easier to display)
-      Serial.print(" longitude : ");
-      Serial.println(&(lng[0]));      // Pass from std string to char value (to make it easier to display)
-    }
+    LOG_INFO(get_unix_time(),"Reading GPS :", String(lattitude,6), " ; ", String(longitude,6), "\r");
   }
   else
   {
-    if(debug_mode) Serial.println("GPS location is not valid");
+    LOG_ERROR(get_unix_time(),"GPS location is not valid\r");
   }  
 }
 
@@ -374,19 +322,16 @@ void print_date_gps(){
     datenum_gps += day_gps; datenum_gps += "/";
     datenum_gps += month_gps; datenum_gps += "/";
     datenum_gps += year_gps; 
-    if(debug_mode){
-      Serial.print(F("DATE GPS : "));
-      Serial.print(datenum_gps);
-    }
+    LOG_INFO(get_unix_time(),"Reading GPS date :",datenum_gps);
   }
   else
   {
-    if(debug_mode) Serial.println("GPS date is not valid");
+    LOG_ERROR(get_unix_time(),"GPS date is not valid\r");
   }  
 
   if (gps.time.isValid() == 1)
   {
-    hour_gps = gps.time.hour() + 2;
+    hour_gps = gps.time.hour();
     minute_gps = gps.time.minute();
     second_gps = gps.time.second();
     // Concatenation in datenum to facilitate processing on datachain (datetime = "hour:minute:second")
@@ -394,20 +339,16 @@ void print_date_gps(){
     datetime_gps += hour_gps; datetime_gps += ":";
     datetime_gps += minute_gps; datetime_gps += ":";
     datetime_gps += second_gps; 
-    if(debug_mode){
-      Serial.print(F(" | TIME GPS (UTC+1) : "));
-      Serial.println(datetime_gps);
-    }
+    LOG_INFO(get_unix_time(),"Reading GPS time : ",datetime_gps,"\r");
   }
   else
   {
-    if(debug_mode) Serial.println("GPS time is not valid");
+    LOG_ERROR(get_unix_time(),"GPS time is not valid\r");
   }  
-
 }
 
 bool gps_available(){
-  boolean newData = false;
+  /*boolean newData = false;
   for (unsigned long start = millis(); millis() - start < 1000;)
   {
     while (neogps.available()) // If gps data available
@@ -418,46 +359,75 @@ bool gps_available(){
   if(newData == true)   
   {
     newData = false;
-    if (gps.location.isValid() == 1)
+    if (gps.location.isValid())
     {
-      if(debug_mode) Serial.println("GPS location is valid");
+      LOG_INFO(get_unix_time(),"GPS location is valid\r");
       return true;
     }
     else
     {
-      if(debug_mode) Serial.println("GPS location is not valid");
+      LOG_ERROR(get_unix_time(),"GPS location is not valid\r");
       return false;
     }  
   }
   else
   {
-    if(debug_mode) Serial.println("No Data detected, can't communicate with GPS...");
+    LOG_ERROR(get_unix_time(),"No Data detected, can't communicate with GPS...\r");
     return false;
-  }  
+  }  */
+  return true;
 }
 
 /* ---------- Functions related to the SD card and the config file ----------*/
 void init_sd(){
-  if (debug_mode) Serial.print("Initializing SD card... : ");   
-  if (!SD.begin(cspin_SD)) {                                           // Checks that the SD card is present and can be initialized (pin 5 by default)            
-    if (debug_mode) Serial.println("Card failed, or not present");
-    if (led_mode==1){
-      errormessage_sd();
-    }
+  LOG_INFO(get_unix_time(),"Initializing SD card... : ");  
+  if (SD.begin(cspin_SD)) {                                            // Checks that the SD card is present and can be initialized (pin 5 by default)            
+    LOG_ATTACH_FS_AUTO(SD, logFilename, FILE_APPEND);                  // Set file system to save every log automatically 
+    LOG_SET_OPTION(0, 1, 0);                                           // LOG_SET_OPTION(file, line, func) Set if it will be printed (1) or not (0)
+    LOG_INFO(get_unix_time(),"Card initialized\r"); 
+  }else{
+    LOG_ERROR(get_unix_time(),"Card failed or not present\r");
   }
-  if (debug_mode) Serial.println("card initialized.");  
   delay(300);  
 
-  // Allows to resume the reading of the binary file at the last frame written at each reboot of the card
-  File binFile = SD.open(binFilename, FILE_READ);
-  reading_pos = binFile.size();
-}
+  if(!SD.exists("/increment_file_name.txt")){                          // If increment file name doesn't exist
+    incrementfile = SD.open("/increment_file_name.txt", FILE_WRITE);   // Create it
+    LOG_INFO(get_unix_time(), "increment_file_name.txt created\r");
+    incrementfile.close();
+  }
+  incrementfile = SD.open("/increment_file_name.txt", FILE_READ);      // Open increment file
+  if(incrementfile){
+    LOG_INFO(get_unix_time(), "increment_file_name.txt opened\r");
+    while(incrementfile.available()){
+      d_int = incrementfile.read();     // Update increment value according to last value stored in the file
+    }
+    incrementfile.close();
+    LOG_INFO(get_unix_time(), "increment file value d_int = ", d_int, "\r");
+  }else{
+    LOG_INFO(get_unix_time(), "Opening increment_file_name.txt failed\r");
+  }
+  dataFilename = "/datalog_" + String(d_int+1,DEC) + ".txt";           // Updating file names with incrementation
+  binFilename = "/binfile_" + String(d_int+1,DEC) + ".bin";
+  logFilename = "/log_" + String(d_int+1,DEC) + ".txt"; 
 
-void errormessage_sd(){
-  for (int i=0; i <= 8; i++){                   
-      //digitalWrite(greenled, HIGH); delay(400);
-      //led_blinked(3,100);
-      //digitalWrite(greenled, LOW); delay (300);
+  LOG_ATTACH_FS_AUTO(SD, logFilename, FILE_APPEND);                    // Set file system to save every log automatically 
+
+  File dataFile = SD.open("/increment_file_name.txt", FILE_APPEND);             
+  if(dataFile){                                                        // If increment file available
+    d_int = d_int + 1;
+    dataFile.write(d_int);                                             // Update and write the new d_int value for next reading
+    dataFile.close();
+    LOG_INFO(get_unix_time(), "Updating d_int value in increment_file_name.txt", d_int, "\r");
+  }
+  else LOG_ERROR(get_unix_time(),"Error opening increment file\r");    // If file not opened, display error
+  
+  if(!SD.exists(binFilename)){                                         // If bin file name doesn't exist     
+    File binFile = SD.open(binFilename, FILE_WRITE);                   // Create it
+    LOG_INFO(get_unix_time(), binFilename, " created\r");
+    binFile.close();
+    binFile = SD.open(binFilename, FILE_READ);                         // Allow to resume the reading of the binary file at the last frame written at each reboot of the card
+    reading_pos = binFile.size();
+    binFile.close();
   }
 }
 
@@ -470,7 +440,7 @@ void lecture_config(){
   int k=0;
   
   if (confFile) {
-    if(debug_mode) Serial.println("Opening "+fichier_config);
+    LOG_INFO(get_unix_time(),"Opening",fichier_config,"\r");
     while (confFile.available()) {
       x = confFile.read();
       if (x!='\n') {       // If no line break
@@ -505,8 +475,7 @@ void lecture_config(){
     }
     confFile.close(); // Close config file
   } else {
-    Serial.println("error opening "+fichier_config);
-    while(1) errormessage_sd();
+    LOG_ERROR(get_unix_time(),"Error opening",fichier_config,"\r");
   }
 }
 
@@ -517,110 +486,139 @@ void refresh_config_values(){
   led_mode=led_mode_sd.toInt(); 
 }
 
-void mesure_cycle_to_datachain(){
-  reading_rtc(); // Date and time acquisition via RTC
-
-  // Create a new datachain to store the measured values
-  datachain = "";                               // Init datachain
-  datachain += datetime_rtc;                    // Write date and time in datachain
-
-  enable_ec_parameters(EC_ENABLED, TDS_ENABLED, SAL_ENABLED, SG_ENABLED); // Controls the active parameters at the output of the conductivity sensor
-
-  // Reads the sensors and add their values to datachain 
-  if(debug_mode2) Serial.println("Measure : ");
-
-  mesureEC();           // Atlas ec ezo sensor measure
-  mesure_temp();        // Temperature sensor measure
-  scanning_gps_coord(); // Gps coordinates acquisition
-  if(debug_mode2) Serial.println("");
-
-  datachain += " | (lat)";  
-  datachain += &(lat[0]); datachain += " , (long)"; // Writte lattitude in datachain
-  datachain += &(lng[0]); datachain += " ; ";       // Writte longitude in datachain
-  datachain += fast_temp; datachain += "°C ; ";     // Writte temperature in datachain
-  
-  // Writing ec ezo unity according to the enabled parameters
-  if (EC_ENABLED){ 
-    datachain += conductivity; datachain += "uS/cm ";
+void calcul_and_filling_dataframe_write(){
+  neogps.println("a");                 // Sending any character to wake up gps
+  digitalWrite(commut_EC, HIGH);         // EC sensor waking up
+  delay(500);
+  LOG_INFO("");
+  LOG_INFO(get_unix_time(),"Calcul and filling dataframe_write\r");
+  reading_rtc();                             // Date and time acquisition via RTC
+  for(int i = 0; i < tab_length; i++){       // Tabs sum calculation 
+    lat_sum = lat_sum + tab_lat[i];
+    lng_sum = lng_sum + tab_lng[i];
+    temp_sum = temp_sum + tab_temp[i];
+    cond_sum = cond_sum + tab_cond[i];
   }
-  else if (TDS_ENABLED){ 
-    datachain += total_dissolved_solids; datachain += "ppm ";
-  }
-  else if (SAL_ENABLED){
-    datachain += salinity; datachain += "PSU ";
-  }
-  else if (SG_ENABLED){
-    datachain += seawater_gravity;
+  lat_moy = lat_sum / tab_length;            // Average calculation to store in dataframe_write 
+  lng_moy = lng_sum / tab_length;
+  temp_moy = temp_sum / tab_length;
+  cond_moy = cond_sum / tab_length;
+
+  lat_sum = 0; lng_sum = 0; temp_sum = 0; cond_sum = 0;
+
+  temp_rms = rmsValue(tab_temp, tab_length); // RMS calculation to store in dataframe_write 
+  cond_rms = rmsValue(tab_cond, tab_length);
+
+  LOG_INFO(get_unix_time(), "lat moy : ", lat_moy, " long moy : ", lng_moy, " temp moy : ", temp_moy, " temp rms : ", temp_rms, "cond moy : ", cond_moy, "cond rms : ", cond_rms, "\r");
+
+  for(int i = 0; i < tab_length; i++){       // Empty tabs for next frame's acquisitions
+    tab_lat[i] = 0;
+    tab_lng[i] = 0;
+    tab_temp[i] = 0;
+    tab_cond[i] = 0;
   }
 
-  // outBuffer for Iridum sending (trame brute)
-  sprintf(outBuffer, "%02d%02d%d%02d%02d%02d%0.6lf%0.6lf%0.2f%0.2f", 
-    gps.date.day(), 
-    gps.date.month(),
-    gps.date.year(), 
-    gps.time.hour()+2, 
-    gps.time.minute(), 
-    gps.time.second(),
-    gps.location.lat(),
-    gps.location.lng(),
-    conductivity,
-    fast_temp);
-
-  outBuffer_string = outBuffer; // Char to string
-
-  // Filling dataframe_write structure
-  dataframe_write.d = uint_dayRTC;
+  dataframe_write.d = uint_dayRTC;           // Filling dataframe_write structure for .bin file (for Iridium sending)
   dataframe_write.mth = uint_monthRTC;
   dataframe_write.y = uint_yearRTC;
   dataframe_write.h = uint_hourRTC;
   dataframe_write.min = uint_minRTC;
   dataframe_write.s = uint_secRTC;
-  dataframe_write.lat = gps.location.lat();
-  dataframe_write.lng = gps.location.lng();
-  dataframe_write.cond = conductivity;
-  dataframe_write.temp = fast_temp;
+  dataframe_write.lat_moy = lat_moy;  
+  dataframe_write.lng_moy = lng_moy;
+  dataframe_write.cond_moy = cond_moy;
+  dataframe_write.cond_rms = cond_rms;
+  dataframe_write.temp_moy = temp_moy;
+  dataframe_write.temp_rms = temp_rms;
+
+  // Filling outBuffer for .txt file storage in each acquisition
+  sprintf(outBuffer, "FRAME : %02d/%02d/%d %02d:%02d:%02d lat_moy : %0.6lf long_moy : %0.6lf cond_moy : %0.2f cond_rms : %0.2f temp_moy : %0.2f temp_rms : %0.2f",     
+    uint_dayRTC, 
+    uint_monthRTC,
+    uint_yearRTC, 
+    uint_hourRTC, 
+    uint_minRTC, 
+    uint_secRTC,
+    lat_moy,
+    lng_moy,
+    cond_moy,
+    cond_rms,
+    temp_moy,
+    temp_rms);
 }
 
-void save_datachain_to_sd(){
+void store_data_in_arrays(int acquisition_number){                        // Store each acqusition of the frame in float arrays
+  //neogps.println("a");                 // Sending any character to wake up gps
+  //digitalWrite(commut_EC, HIGH);       // EC sensor waking up
+  //delay(500);
+
+  LOG_DEBUG(get_unix_time(),"Store each acqusition of the frame in float arrays\r");
+  reading_rtc();                                                          // Date and time acquisition via RTC
+  mesureEC();                                                             // Atlas ec ezo sensor measure
+  mesure_temp();                                                          // Temperature sensor measure
+  scanning_gps_coord();                                                   // Gps coordinates acquisition
+
+  save_acquisition_to_sd();                                               // Save each acquisition of the frame in .txt file on SD card
+
+  tab_lat[acquisition_number] = gps.location.lat();                      // Fill frame's tabs
+  tab_lng[acquisition_number] = gps.location.lng();
+  tab_temp[acquisition_number] = fast_temp;
+  tab_cond[acquisition_number] = conductivity;
+
+  //digitalWrite(commut_EC, LOW);        // EC sensor sleeping
+  //neogps.println("$PMTK161,0*28");     // Command line to put GPS in sleeping mode
+}
+
+void save_dataframe_to_sd(){
+  LOG_DEBUG(get_unix_time(),"Saving dataframe to SD\r");
   //--- Text format saving (.txt) ---//
   File dataFile = SD.open(dataFilename, FILE_APPEND);                           // FILE_APPEND for esp32, FILE_WRITE for arduino
-  if (dataFile) {                                                               // If file available, writes the content of the datachain to the file
-    dataFile.println(outBuffer);                                                // Classic data buffer saving (more visual in the file .txt)
-    dataFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write)); // Data structure saving (more practical and optimized but less visual)
+  if(dataFile){                                                                // If file available, writes the content of the datachain to the file                                         
+    dataFile.print("outBuffer : ");                                             // Classic data buffer saving (more visual in the file .txt)
+    dataFile.println(outBuffer);  
     dataFile.println(" ");
     dataFile.close();
-    if (debug_mode2) Serial.println("Textfile created succesfully");
-    if (debug_mode2) {Serial.print("Filename : "); Serial.println(dataFilename); Serial.println();}
+    LOG_DEBUG(get_unix_time(),"Textfile ", dataFilename, " created successfully\r");
   }
   else {                                                                        // If file not opened, display error
-    if (debug_mode) Serial.println("error opening txt file");
-    for (int i=0; i<=5; i++){
-        errormessage_sd();
-    }
+    LOG_ERROR(get_unix_time(),"Error opening txt file\r");
   }
 
   //--- Binary format saving (.bin) ---//
-  File binFile = SD.open(binFilename, FILE_APPEND);                             // Writing mode opening file  
+  File binFile = SD.open(binFilename, FILE_APPEND);                             // Writing mode opening file 
+   
   if (binFile) {                                                                // If file available
     binFile.write((const uint8_t *)&dataframe_write, sizeof(dataframe_write));  // Write the content of the dataframe_write struct in the file
     delay(50);
     binFile.close();
-    
-    if (debug_mode2) Serial.println("Binary file created succesfully");
-    if (debug_mode2) {Serial.print("Filename : "); Serial.println(binFilename); Serial.println();}
+    LOG_DEBUG(get_unix_time(),"Binaryfile ", dataFilename, " created successfully\r");
   }
   else {                                                                        // If file not opened, display error
-    if (debug_mode) Serial.println("error opening binary file");
-    for (int i=0; i<=5; i++){
-        errormessage_sd();
-    }
+    LOG_ERROR(get_unix_time(),"Error opening binary file\r");
   }
   delay(400);
 }
 
+void save_acquisition_to_sd(){
+  LOG_DEBUG(get_unix_time(),"Saving acquisition to SD\r");
+  //--- Text format saving (.txt) ---//
+  File dataFile = SD.open(dataFilename, FILE_APPEND);                           // FILE_APPEND for esp32, FILE_WRITE for arduino
+  if (dataFile) {                                                               // If file available, writes the content of the datachain to the file
+    dataFile.print(datetime_rtc); dataFile.print(" ; ");
+    dataFile.print(conductivity); dataFile.print(" ; ");
+    dataFile.print(fast_temp); dataFile.print(" ; ");
+    dataFile.print(String(lattitude,6)); dataFile.print(" ; "); dataFile.println(String(longitude,6));
+    dataFile.close();
+    LOG_DEBUG(get_unix_time(),"Acquisition correctly saved in file", dataFilename, "\r");
+  }
+  else {                                                                        // If file not opened, display error
+    LOG_ERROR(get_unix_time(),"Error opening txt file\r");
+  }
+}
+
 void readSDbinary_to_struct(){
-  Serial.println("------ READING SD binary to struct ------");
-  for(int i=0; i<=FRAME_NUMBER; i++){                                    // Concatenation of n buffer_read in buffer_read_340 
+  LOG_INFO(get_unix_time(),"Reading SD binary file to struct\r");
+  for(int i = 0; i <= FRAME_NUMBER; i++){                                // Concatenation of n buffer_read in buffer_read_340 
     File binFile = SD.open(binFilename, FILE_READ);                      // Reading mode opening file  
     if (binFile.available()) {                                           // If file available 
       binFile.seek(reading_pos);                                         // Reading from the last frame recorded since starting the uC
@@ -631,66 +629,45 @@ void readSDbinary_to_struct(){
       delay(50);   
     }
     else {                                                               // If file not opened, display error
-      if (debug_mode) Serial.println("error opening reading binary file");
-      for (int i=0; i<=5; i++) errormessage_sd();
+      LOG_ERROR(get_unix_time(),"Error opening reading binary file\r");
     }
-    
     for(int j=0; j<=sizeof(buffer_read); j++) buffer_read_340[i*sizeof(buffer_read)+j] = buffer_read[j];   // Push buffer_read in buffer_read_340 
   }                                                                     
-  if(debug_mode){                                                        // Testing if structure and buffers are correctly completed
-    Serial.println("dataframe_read sample : ");
-    Serial.print("lat : ");
-    Serial.println(dataframe_read.lat);
-    Serial.print("lng : ");
-    Serial.println(dataframe_read.lng);
-    Serial.print("temp : ");
-    Serial.println(dataframe_read.temp);
-    Serial.print("cond : ");
-    Serial.println(dataframe_read.cond);
-    Serial.print(dataframe_read.y); 
-    Serial.print("/");
-    Serial.print(dataframe_read.d);
-    Serial.print("/");
-    Serial.println(dataframe_read.mth);
-    Serial.print(dataframe_read.h);
-    Serial.print(":");
-    Serial.print(dataframe_read.min);
-    Serial.print(":");
-    Serial.println(dataframe_read.s);
-    Serial.print("dataframe_read size : ");
-    Serial.println(sizeof(dataframe_read));
+  if(debug_mode2){                                                        // Testing if structure and buffers are correctly completed
     Serial.print("dataframe_read : ");
     for(int i = 0; i < sizeof(dataframe_read); i++) Serial.printf("%02x", (unsigned int) ((char*)&dataframe_read)[i]);
-    Serial.println("\n");
-    Serial.print("buffer_read size : ");
-    Serial.println(sizeof(buffer_read));
     Serial.print("buffer_read : ");
     for(int i=0; i<=sizeof(buffer_read); i++) Serial.printf("%02x", buffer_read[i], HEX);  
-    Serial.println("\n");
-    Serial.print("buffer_read_340 size : ");
-    Serial.println(sizeof(buffer_read_340));
     Serial.print("buffer_read_340 : ");
     for(int i=0; i<=sizeof(buffer_read_340); i++) Serial.printf("%02x", buffer_read_340[i], HEX);  
-    Serial.println("\n");
   }   
+  LOG_INFO(get_unix_time(), "dataframe_read sample : lat moy : ", dataframe_read.lat_moy, " long moy : ", dataframe_read.lng_moy, " temp moy : ", dataframe_read.temp_moy, "cond moy : ", dataframe_read.cond_moy, "\r");
+  LOG_INFO(get_unix_time(), "                       ", dataframe_read.y, "/", dataframe_read.d, "/", dataframe_read.mth, "  ", dataframe_read.h, ":", dataframe_read.min, ":", dataframe_read.s, "\r");
+  LOG_INFO(get_unix_time(), "                        dataframe_read size : ", sizeof(dataframe_read), "\r");
+  //LOG_INFO(get_unix_time(), "                        dataframe_read content : ", (char*)&dataframe_read, "\r");
+  LOG_INFO(get_unix_time(), "                        buffer_read size : ", sizeof(buffer_read), "\r");
+  //LOG_INFO(get_unix_time(), "                        buffer_read content : ", buffer_read, "\r");
+  LOG_INFO(get_unix_time(), "                        buffer_read_340 size : ", sizeof(buffer_read_340), "\r");
+  //LOG_INFO(get_unix_time(), "                        buffer_read_340 content : ", buffer_read_340, "\r");
 }
 
 void readGPS_to_buffer(){
   sprintf(GPSBuffer, "%02d/%02d/%d; %02d:%02d:%02d; %0.6lf %0.6lf", 
-    gps.date.day(), 
-    gps.date.month(),
-    gps.date.year(), 
-    gps.time.hour()+2, 
-    gps.time.minute(), 
-    gps.time.second(),
-    gps.location.lat(),
-    gps.location.lng());
+  gps.date.day(), 
+  gps.date.month(),
+  gps.date.year(), 
+  gps.time.hour()+2, 
+  gps.time.minute(), 
+  gps.time.second(),
+  gps.location.lat(),
+  gps.location.lng());
   //outBuffer_string = outBuffer; // Char to string
 }
 
 /* ---------- Fonctions liées à la RTC DS3231 Adafruit ----------*/
 void init_RTC(){
   rtc.begin();
+  LOG_INFO(get_unix_time(),"Init RTC\r");
 }
 
 void reading_rtc() {     
@@ -738,15 +715,11 @@ void reading_rtc() {
   timenum_rtc = ""; timenum_rtc += hour_rtc; timenum_rtc += minute_rtc; timenum_rtc += second_rtc;
   datetime_rtc = ""; datetime_rtc += day_rtc; datetime_rtc += "/"; datetime_rtc += month_rtc; datetime_rtc += "/"; datetime_rtc += year_rtc; datetime_rtc += " "; datetime_rtc += hour_rtc; datetime_rtc += ":"; datetime_rtc += minute_rtc; datetime_rtc += ":"; datetime_rtc += second_rtc;
 
-  if (debug_mode) {
-    if(debug_mode2) Serial.println("\nRTC values :");
-    if(debug_mode2) { Serial.print("Date RTC : "); Serial.println(datenum_rtc); }
-    if(debug_mode2) { Serial.print("Time RTC : "); Serial.println(timenum_rtc); }
-    Serial.print("DateTime RTC "); Serial.println(datetime_rtc);
-  }
+  LOG_INFO(get_unix_time(),"Reading RTC : ", datetime_rtc, "\r");
 }
 
 void set_rtc(int day, int month, int year, int hour, int min, int sec){
+  LOG_INFO(get_unix_time(),"RTC manually adjusted\r");
   rtc.adjust(DateTime(year, 
                       month, 
                       day, 
@@ -756,27 +729,26 @@ void set_rtc(int day, int month, int year, int hour, int min, int sec){
 }
 
 void set_rtc_by_gps(){
-  if(debug_mode) {
-    Serial.println("Setting RTC from GPS");
-  }
+  LOG_INFO(get_unix_time(),"Setting RTC from GPS\r");
   print_date_gps();   // Reading GPS date
   if (gps.date.isValid() && gps.time.isValid())
   {
     rtc.adjust(DateTime(gps.date.year()-2000, 
                         gps.date.month(), 
                         gps.date.day(), 
-                        gps.time.hour()+2, 
+                        gps.time.hour(), 
                         gps.time.minute(), 
                         gps.time.second()));
-    reading_rtc();  //test
-    if(debug_mode) {Serial.print("RTC set from GPS at ");Serial.println(datetime_rtc);Serial.println();}
+    reading_rtc();    // Test (to delete)
+    LOG_INFO(get_unix_time(),"RTC set from GPS at", datetime_rtc, "\r");
   }else{
-    if(debug_mode) Serial.println("No GPS fix yet. Cant set RTC yet.\n");
+    LOG_ERROR(get_unix_time(),"No GPS fixed yet. Cant set RTC yet\r");
   }  
 }
 
 int check_rtc_set()
 {
+  LOG_INFO(get_unix_time(),"Check RTC set\r");
   DateTime now = rtc.now();                               // Reading RTC time
   print_date_gps();                                       // Reading GPS time
   if (gps.date.isValid() && gps.time.isValid())
@@ -785,26 +757,28 @@ int check_rtc_set()
   }
   if(drifting_time > 10 || drifting_time < -10){          // If more than 10 seconds drifting                               
     if(debug_mode2) Serial.println("RTC time not set\n"); // RTC is not correctly set
+    LOG_ERROR(get_unix_time(),"RTC time not set\r");
     return 0;
   }else{
     if(debug_mode2) Serial.println("RTC time set\n");     // RTC is correctly set
+    LOG_INFO(get_unix_time(),"RTC time set\r");
     return 1;
   }
 }
 
 int get_unix_time(){
-  DateTime now = rtc.now();
-  return now.unixtime();
+  //DateTime now = rtc.now();
+  //return now.unixtime();
+  return millis()/1000;
 }
 
-
-/* ---------- Functions related to INA219 current sensor ----------
+/* ---------- Functions related to INA219 current sensor ---------- */
 void init_ina219(){
   if (! ina219.begin()) {
-    if(debug_mode) Serial.println("Failed to find INA219 chip");
+    LOG_INFO(get_unix_time(),"Failed to find INA219 chip\r");
   }
   else{ 
-    if(debug_mode) Serial.println("Correctly found INA219 chip");
+    LOG_INFO(get_unix_time(),"Correctly found INA219 chip\r");
   }
 }
 
@@ -812,14 +786,18 @@ void get_current(){
   float shuntvoltage = 0;
   float busvoltage = 0;
   float current_mA = 0;
+  float sum_current = 0;
   float loadvoltage = 0;
   float power_mW = 0;
+  float capacity_Ah = 0;
 
   shuntvoltage = ina219.getShuntVoltage_mV();
   busvoltage = ina219.getBusVoltage_V();
   current_mA = ina219.getCurrent_mA();
   power_mW = ina219.getPower_mW();
   loadvoltage = busvoltage + (shuntvoltage / 1000);
+  sum_current = sum_current + current_mA;
+  capacity_Ah = (sum_current / 1000) * 3600;
   
   if(debug_mode){
     Serial.println("------- Measuring voltage and current with INA219 -------");
@@ -831,47 +809,48 @@ void get_current(){
     Serial.println("");
   }
 
+  LOG_INFO(get_unix_time(),"Correctly found INA219 chip\r");
+
   delay(2000);
 }
-*/
 
 /* ---------- Functions related to Iridium Rockblock 9603 ----------*/
 void init_iridium(){
-  pinMode(2, OUTPUT);                          // Set modem sleeping port
-  digitalWrite(2, HIGH);                       // Waking up
   //ssIridium.begin(19200);                    // Start the serial port connected to the satellite modem (Software version)
   ssIridium.begin(19200, SERIAL_8N1, 10, 5);   // Start the serial port connected to the satellite modem (Hardware version)
   modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
 
   // Begin satellite modem operation
-  Serial.println("Starting modem...");
+  LOG_INFO(get_unix_time(),"Starting Iridium modem\r");
   err = modem.begin();                         // Wake up the modem and prepare it to communicate.
   if (err != ISBD_SUCCESS)
   {
-    Serial.print("Begin failed: error ");
-    Serial.println(err);
+    LOG_ERROR(get_unix_time(),"Iridium starting failed with error ", err, "\r");
     if (err == ISBD_NO_MODEM_DETECTED)
-      Serial.println("No modem detected: check wiring.");
+      LOG_ERROR(get_unix_time(),"No modem detected, check wiring\r");
     return;
   }
-  else Serial.println("Modem well initialised");
-  digitalWrite(2, LOW);                       // Modem sleeping
+  else {
+    LOG_INFO(get_unix_time(),"Modem well initialized\r");
+  }
+  LOG_INFO(get_unix_time(),"Sleeping modem\r");
+
+  modem.sleep();                       // Modem sleeping
 }
 
 void print_iridium_infos(){
-  digitalWrite(2, HIGH);                      // Waking up modem
+  if(modem.isAsleep()) modem.begin();                       // Waking up modem
   delay(500);
-  if(debug_mode2) Serial.println("Scanning Iridium modem version ... ");
+  LOG_INFO(get_unix_time(),"Scanning Iridium modem version\r");
   err = modem.getFirmwareVersion(version, sizeof(version)); // Print the firmware revision
   if (err != ISBD_SUCCESS)
   {
      Serial.print("FirmwareVersion failed: error ");
      Serial.println(err);
+     LOG_ERROR(get_unix_time(),"Firmware version failed with error ", err, "\r");
      return;
   }
-  Serial.print("---------------------------------------------------- Firmware Version is ");
-  Serial.print(version);
-  Serial.println(".");
+  LOG_INFO(get_unix_time(),"Firmware version is ", version, "\r");
 
   // Test signal quality.
   // This returns a number between 0 and 5.
@@ -879,48 +858,40 @@ void print_iridium_infos(){
   err = modem.getSignalQuality(signalQuality);
   if (err != ISBD_SUCCESS)
   {
-    Serial.print("SignalQuality failed: error ");
-    Serial.println(err);
+    LOG_ERROR(get_unix_time(),"Signal quality failed with error ", err, "\r");
     return;
   }
-
-  Serial.print("---------------------------------------------------- On a scale of 0 to 5, signal quality is currently ");
-  Serial.print(signalQuality);
-  Serial.println(".");
+  LOG_INFO(get_unix_time(),"On a scale of 0 to 5, signal quality is currently ", signalQuality, "\r");
 }
 
 void sendreceive_recovery_iridium(){
-  digitalWrite(2, HIGH);                                                              // Waking up modem
+  if(modem.isAsleep()) modem.begin();                                                   // Waking up modem
   delay(500);
-  if (debug_mode) Serial.print("Trying to send the text message.  This might take several minutes.\r\n");
+  LOG_INFO(get_unix_time(),"Trying to send Iridium message, this might take several minutes\r");
   receive_buffer_size = sizeof(receive_buffer);
   for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                                            // Clearing receive buffer
   //int err = modem.sendSBDText(GPSBuffer);                                                                      // Iridium sending command only
   int err = modem.sendReceiveSBDText(GPSBuffer, receive_buffer, receive_buffer_size);                            // Iridium sending and receiving command 
-  //int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size); // Test to use only 1 credit instead of 7 for buffer_read_340
+  //int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size); // Test with binary instead of text (to delete)
   if (err != ISBD_SUCCESS)
   {
-    if(debug_mode){
-      Serial.print("Transmission failed with error code ");
-      Serial.println(err);
-      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
-    }
+    PRINTLN_FILE("");
+    LOG_ERROR(get_unix_time(),"Transmission failed with error ", err, "\r");
+    if (err == ISBD_SENDRECEIVE_TIMEOUT) LOG_ERROR("TIME OUT\r");
   }
   else{ 
-    if(debug_mode) Serial.println("Text buffer sending Ok\n"); 
-    if(debug_mode){                                                                   // Receive buffer serial print
-      Serial.print("Inbound buffer size is ");
-      Serial.println(receive_buffer_size);
+    PRINTLN_FILE("");
+    LOG_INFO(get_unix_time(),"Text buffer sending Ok\r");
+    if(debug_mode2){                                                              // Receive buffer serial print
       Serial.print("Receive buffer : ");
-      for(int i=0; i<receive_buffer_size; ++i) Serial.write(receive_buffer[i]);       // Serial monitor print for text dataframe
+      for(int i=0; i<receive_buffer_size; ++i) Serial.write(receive_buffer[i]);  // Serial monitor print for text dataframe
       Serial.println();
-      Serial.print("Messages remaining to be retrieved: ");
-      Serial.println(modem.getWaitingMessageCount());
     }
-    switch_state = receive_buffer[0];                                                 // To switch state if MT message tell us
+    LOG_INFO(get_unix_time(),"DATA RECEIVING ! buffer size is ", receive_buffer_size, "; Receive_buffer[0] : ", receive_buffer[0], "\r");
+    switch_state = receive_buffer[0];                                            // To switch state if MT message tell us
     sending_ok = true;
   }
-  digitalWrite(2, LOW);                                                               // Modem sleeping
+  modem.sleep();                                                          // Modem sleeping
 
   #if DIAGNOSTICS
   void ISBDConsoleCallback(IridiumSBD *device, char c)
@@ -936,44 +907,104 @@ void sendreceive_recovery_iridium(){
 }
 
 void sendreceive_deployed_iridium(){
-  digitalWrite(2, HIGH);                                                   // Waking up modem
+  if(modem.isAsleep()) modem.begin();                                // Waking up modem
   delay(500);
-  if (debug_mode) Serial.print("---------------------------------------------- Trying to send the binary message.  This might take several minutes.\r\n");
+  LOG_INFO(get_unix_time(),"Trying to send Iridium message, this might take several minutes\r");
   receive_buffer_size = sizeof(receive_buffer);
   for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                                                    // Clearing buffer
   //int err = modem.sendSBDBinary(buffer_read_340, sizeof(buffer_read_340));                                             // Iridium sending command only
-  //int err = modem.sendReceiveSBDBinary(buffer_read_340, sizeof(buffer_read_340), receive_buffer, receive_buffer_size); // Iridium sending and receiving command 
-  int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size);           // Test to use only 1 credit instead of 7 for buffer_read_340
-
-  //if(debug_mode) Serial.print("Receive messages detected : ");
-  //if(debug_mode) Serial.println(modem.getWaitingMessageCount());
-
+  int err = modem.sendReceiveSBDBinary(buffer_read_340, sizeof(buffer_read_340), receive_buffer, receive_buffer_size); // Iridium sending and receiving command 
+  //int err = modem.sendReceiveSBDBinary(buffer_read, sizeof(buffer_read), receive_buffer, receive_buffer_size);           // Test to use only 1 credit instead of 7 for buffer_read_340
   if (err != ISBD_SUCCESS)
   {
-    if(debug_mode){
-      Serial.print("---------------------------------------------------- Transmission failed with error code ");
-      Serial.println(err);
-      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
-    }
+    PRINTLN_FILE("");
+    LOG_ERROR(get_unix_time(),"Transmission failed with error ", err, "\r");
+    if (err == ISBD_SENDRECEIVE_TIMEOUT) LOG_ERROR("TIME OUT\r");
   }
   else{ 
-    if(debug_mode) Serial.println("---------------------------------------------------- Binary buffer sending Ok\n"); 
-    if(debug_mode){                                                                     // Receive buffer serial print
-      Serial.print("Inbound buffer size is ");
-      Serial.println(receive_buffer_size);
+    PRINTLN_FILE("");
+    LOG_INFO(get_unix_time(),"Binary buffer sending Ok\r");
+    if(debug_mode2){                                     // Receive buffer serial print
       Serial.print("Receive buffer : ");
       for(int i=0; i<receive_buffer_size; ++i) Serial.write(receive_buffer[i]);                  // Serial monitor print for text dataframe
       //for(int i=0; i<=receive_buffer_size; i++) Serial.printf("%02x", receive_buffer[i], HEX); // Serial monitor print for binary dataframe
       Serial.println();
-      Serial.print("Messages remaining to be retrieved: ");
-      Serial.println(modem.getWaitingMessageCount());
     }
+    LOG_INFO(get_unix_time(),"DATA RECEIVING ! buffer size is ", receive_buffer_size, "; Receive_buffer : ", receive_buffer[0], "\r");
+    switch_state = receive_buffer[0];                   // To switch state if MT message tell us
+    sending_ok = true;                                  // For Iridium => continue to send same buffer until it's sent (used in main to avoid timeout and data lost)
+  }
+  modem.sleep();                                 // Modem sleeping
 
-    switch_state = receive_buffer[0];                                                   // To switch state if MT message tell us
-    sending_ok = true;
+  #if DIAGNOSTICS
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
   }
 
-  digitalWrite(2, LOW);  // Modem sleeping
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+  #endif
+}
+
+void sendreceive_emergency_iridium(){
+  if(modem.isAsleep()) modem.begin();                                                   // Waking up modem
+  delay(500);
+  LOG_INFO(get_unix_time(),"Trying to send Iridium message, this might take several minutes\r");
+  receive_buffer_size = sizeof(receive_buffer);
+  for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                                            // Clearing receive buffer
+  int err = modem.sendReceiveSBDText("! LOW VOLTAGE !", receive_buffer, receive_buffer_size);                    // Iridium sending and receiving command 
+  if (err != ISBD_SUCCESS)
+  {
+    PRINTLN_FILE("");
+    LOG_ERROR(get_unix_time(),"Transmission failed with error ", err, "\r");
+    if (err == ISBD_SENDRECEIVE_TIMEOUT) LOG_ERROR("TIME OUT\r");
+  }
+  else{ 
+    PRINTLN_FILE("");
+    LOG_INFO(get_unix_time(),"Text buffer sending Ok\r");
+    if(debug_mode2){                                                              // Receive buffer serial print
+      Serial.print("Receive buffer : ");
+      for(int i=0; i<receive_buffer_size; ++i) Serial.write(receive_buffer[i]);  // Serial monitor print for text dataframe
+      Serial.println();
+    }
+    LOG_INFO(get_unix_time(),"DATA RECEIVING ! buffer size is ", receive_buffer_size, "; Receive_buffer[0] : ", receive_buffer[0], "\r");
+    switch_state = receive_buffer[0];                                            // To switch state if MT message tell us
+    sending_ok = true;
+  }
+  modem.sleep();                                                          // Modem sleeping
+
+  #if DIAGNOSTICS
+  void ISBDConsoleCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+
+  void ISBDDiagsCallback(IridiumSBD *device, char c)
+  {
+    //Serial.write(c);
+  }
+  #endif
+}
+
+void send_text_iridium(char text[50]){
+  if(modem.isAsleep()) modem.begin();                         // Waking up modem
+  delay(500);
+  LOG_INFO(get_unix_time(),"Trying to send Iridium message, this might take several minutes\r");
+
+  int err = modem.sendSBDText(text);                          // Iridium sending command only
+  if (err != ISBD_SUCCESS)
+  {
+    LOG_ERROR(get_unix_time(),"Transmission failed with error ", err, "\r");
+    if (err == ISBD_SENDRECEIVE_TIMEOUT) LOG_ERROR("TIME OUT\r");
+  }
+  else{ 
+    LOG_INFO(get_unix_time(),"Text buffer sending Ok\r");
+    sending_ok = true;
+  }
+  modem.sleep();                                              // Modem sleeping
 
   #if DIAGNOSTICS
   void ISBDConsoleCallback(IridiumSBD *device, char c)
@@ -989,71 +1020,23 @@ void sendreceive_deployed_iridium(){
 }
 
 void receive_iridium(){
-  if (!messageSent || modem.getWaitingMessageCount() > 0)
-  {
-    if(debug_mode) Serial.println("sendReceiveSBD Message detected ... ");
-    size_t receive_buffer_size = sizeof(receive_buffer);
-    
-    // First time through send+receive; subsequent loops receive only
-    if (!messageSent)
-      err = modem.sendReceiveSBDBinary(receive_buffer, 11, receive_buffer, receive_buffer_size);
-      //err = modem.sendReceiveSBDText(NULL, receive_buffer, receive_buffer_size);
-    else
-      err = modem.sendReceiveSBDText(NULL, receive_buffer, receive_buffer_size);
+  LOG_INFO("Receive_Iridium()\r");
+  if(modem.isAsleep()) modem.begin();                         // Waking up modem
+  
+  receive_buffer_size = sizeof(receive_buffer);
+  for(int i = 0; i < receive_buffer_size; i++) receive_buffer[i] = 0;                    // Clearing receive buffer
+  
+  int err = modem.sendReceiveSBDText(NULL, receive_buffer, receive_buffer_size);         // Iridium receive only command 
 
-    if(err != ISBD_SUCCESS)
-    {
-      if(debug_mode) Serial.print("sendReceiveSBD* failed: error ");
-      if(debug_mode) Serial.println(err);
-    }
-    else // success!
-    {
-      messageSent = true;
-      if(debug_mode){
-        Serial.print("Inbound buffer size is ");
-        Serial.println(receive_buffer_size);
-        for(int i=0; i<receive_buffer_size; ++i)
-        {
-          Serial.write(receive_buffer[i]);
-        }
-        Serial.println();
-        Serial.print("Messages remaining to be retrieved: ");
-        Serial.println(modem.getWaitingMessageCount());
-      }
-    }
-  }else{
-    if(debug_mode) Serial.println("sendReceiveSBD No message detected");
+  if(err != ISBD_SUCCESS){
+    PRINTLN_FILE("");
+    LOG_ERROR(get_unix_time(),"Transmission failed with error ", err, "\r");
+    if (err == ISBD_SENDRECEIVE_TIMEOUT) LOG_ERROR("TIME OUT\r");
   }
-}
-
-void send_text_iridium(char text[50]){
-  digitalWrite(2, HIGH);                                                              // Waking up modem
-  delay(500);
-  if (debug_mode) Serial.print("Trying to send the text message.  This might take several minutes.\r\n");
-  int err = modem.sendSBDText(text);                                                                      // Iridium sending command only
-  if (err != ISBD_SUCCESS)
-  {
-    if(debug_mode){
-      Serial.print("Transmission failed with error code ");
-      Serial.println(err);
-      if (err == ISBD_SENDRECEIVE_TIMEOUT) Serial.println("TimeOut : Try again with a better view of the sky\n");
-    }
-  }
-  else{ 
-    if(debug_mode) Serial.println("Text buffer sending Ok\n"); 
-    sending_ok = true;
-  }
-  digitalWrite(2, LOW);                                                               // Modem sleeping
-
-  #if DIAGNOSTICS
-  void ISBDConsoleCallback(IridiumSBD *device, char c)
-  {
-    //Serial.write(c);
+  else{ // success!
+    LOG_INFO(get_unix_time(),"DATA RECEIVING ! buffer size is ", receive_buffer_size, "; Receive_buffer : ", receive_buffer[0], "\r");
+    switch_state = receive_buffer[0];                   // To switch state if MT message tell us
   }
 
-  void ISBDDiagsCallback(IridiumSBD *device, char c)
-  {
-    //Serial.write(c);
-  }
-  #endif
+  modem.sleep();                                                          // Modem sleeping
 }
