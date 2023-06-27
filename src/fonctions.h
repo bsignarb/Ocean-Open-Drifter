@@ -51,7 +51,7 @@ extern uint8_t switch_state; // To switch state if MT message tell us
 /** Initiate Atlas EC conductivity sensor */
 void initEC();
 
-/** @brief Mesure de conductivité
+/** @brief Mesure de conductivité in uS/cm
   * Sends a read request to the EZO EC board and returns the measurement to the serial monitor  
   */
 void mesureEC();

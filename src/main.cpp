@@ -13,7 +13,7 @@ extern bool sending_ok;                                            // For Iridiu
 bool first_init_passed = false;                                    // Differentiates first cycle of the Init from the following ones (and to know when first init succeeded for ISBDCallback() function)
 int actual_acquisition = 0;                                        // To synchronize acquisitions between classic ones and ISBDcallback() ones
 int actual_cycle = 1;                                              // To synchronize frames between classic ones and ISBDcallback() ones
-int time_between_each_acquisition = 16000;                         // Time between each acquisition (16 seconds to have a total period of 20 seconds because of the time acquisition about 4 seconds)
+int time_between_each_acquisition = 18000;                         // Time between each acquisition (16 seconds to have a total period of 20 seconds because of the time acquisition about 4 seconds)
 
 int emergency_sleeping_time = 300;                                 // Emergency sleeping time (5 min)
 bool first_time_emergency = true;                                  // To not go back to emergency state if MT message ask to go in another state
@@ -37,7 +37,6 @@ void loop() {
       LOG_INFO("\r"); 
       LOG_INFO("--- CASE INIT ---\r"); 
       init_cycle();
-      //test_cycle_init();
 
       // Wait until GPS has found its position. If it doesn't found in a certain time, go to sleep to save battery life
       waiting_time = 0;
@@ -49,7 +48,6 @@ void loop() {
       }   
       if(waiting_time >= 300) state_mode = INIT;                   // If GPS not available since more than 5 minutes => Change to INIT state (2nd part for sleeping)
       else                    state_mode = DEPLOYED;               // GPS is available => Change to DEPLOYED state
-      //state_mode = DEPLOYED;
       break;
 
     case DEPLOYED :                                                // Standard acquisition cycles
@@ -119,6 +117,8 @@ void init_cycle(){
     refresh_config_values();         // Refresh program values according to those read in config file
     init_iridium();                  // Init Iridium module
 
+    //set_rtc(26, 05, 2023, 14, 50, 30);
+
     first_init_passed = true;
   }
   else{                              // Following Init cycles for sleeping mode
@@ -131,13 +131,13 @@ void deployed_cycle(){
   if(!check_rtc_set()){                     // If RTC not correctly set
     set_rtc_by_gps();                       // RTC update by gps time
   }
-
+  
   //--- Datalogging ---//
   first_time_emergency = true;                                                         // Used in emergency_cycle() to send only one time Iridium sending
   for(int cycle_number = actual_cycle; cycle_number <= FRAME_NUMBER; cycle_number++){  // FRAME_NUMBER times frames before Iridium sending
     actual_cycle = cycle_number;                                                       // To synchronize frames between classic ones (Deployed and Recovery) and ISBDcallback() ones
 
-    for(int i = actual_acquisition; i < ACQUISITION_NUMBER; i++){                      // ACQUISTION_NUMBER times acquisitions before calcul and storage in frame
+    for(int i = actual_acquisition; i < ACQUISITION_NUMBER; i++){                      // ACQUISTION_NUMBER times acquisitions before calcul and storage in one frame
       PRINTLN_FILE("");
       PRINTLN_FILE("-------------------------------------------- Frame cycle : ", cycle_number, "/", FRAME_NUMBER, " ; Acquisition cycle : ", i+1, "/", ACQUISITION_NUMBER, "\r");
       PRINTLN("");
@@ -165,7 +165,7 @@ void deployed_cycle(){
 
   //--- Iridium sending ---//
   LOG_INFO("GOING TO IRIDIUM PHASE");
-  print_iridium_infos();                    // Iridium modem informations
+  //print_iridium_infos();                    // Iridium modem informations
   sending_ok = false;
   while(sending_ok == false)                // Continue to send same buffer until it's sent (to avoid timeout and data lost)
   {
@@ -173,6 +173,8 @@ void deployed_cycle(){
   }
   counter1_send = millis()/1000;            // counter1_send used to calculate time between each recovery Iridium sending (in recovery cycle)
   LOG_INFO("END OF IRIDIUM PHASE");
+
+  set_rtc_by_gps();
 }
 
 void recovery_cycle(){
@@ -198,7 +200,7 @@ void recovery_cycle(){
   
   //--- Iridium sending ---//
   LOG_INFO("GOING TO IRIDIUM PHASE");
-  print_iridium_infos();                    // Iridium modem informations
+  //print_iridium_infos();                    // Iridium modem informations
   sending_ok = false;
   while(sending_ok == false)                // Continue to send same buffer until it's sent (to avoid timeout and data lost)
   {

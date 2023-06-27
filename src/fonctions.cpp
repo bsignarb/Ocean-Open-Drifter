@@ -49,6 +49,7 @@ byte outBuffer_byte[55];   // To be removed shortly
 
 char GPSBuffer[50];
 int reading_pos = 0;
+int sending_times = 0;    // Number of sending since starting uC
 
 int tab_length = FRAME_DURATION/20; // Acquisition every 20 seconds
 
@@ -212,7 +213,7 @@ void initEC(){
   LOG_INFO(get_unix_time(),"Init EC sensor\r");
 }
 
-void mesureEC(){
+void mesureEC(){ 
   EC.send_read_cmd(); // Sends a read request to the sensor
   delay(600);
   EC.receive_read_cmd(); 
@@ -426,11 +427,11 @@ void init_sd(){
     LOG_INFO(get_unix_time(), binFilename, " created\r");
     binFile.close();
     binFile = SD.open(binFilename, FILE_READ);                         // Allow to resume the reading of the binary file at the last frame written at each reboot of the card
-    reading_pos = binFile.size();
+    reading_pos = 0/*binFile.size()*/;
     binFile.close();
   }
 }
-
+ 
 void lecture_config(){
   confFile = SD.open(fichier_config, FILE_READ); // Opens config.txt file on SD card
   char phrase[200];
@@ -618,10 +619,19 @@ void save_acquisition_to_sd(){
 
 void readSDbinary_to_struct(){
   LOG_INFO(get_unix_time(),"Reading SD binary file to struct\r");
+  /*if(sending_times < 4){
+    reading_pos = reading_pos - (sending_times * sizeof(dataframe_read));  // Substraction to go back in binary file reading position (to resolve a bug)
+  }
+  else{
+    reading_pos = reading_pos - (1 * sizeof(dataframe_read));
+  }*/
+  reading_pos = reading_pos - (1 * sizeof(dataframe_read));
+  sending_times++;
+
   for(int i = 0; i <= FRAME_NUMBER; i++){                                // Concatenation of n buffer_read in buffer_read_340 
     File binFile = SD.open(binFilename, FILE_READ);                      // Reading mode opening file  
     if (binFile.available()) {                                           // If file available 
-      binFile.seek(reading_pos);                                         // Reading from the last frame recorded since starting the uC
+      binFile.seek(reading_pos);                                         // Reading from the last frame recorded in binary file
       binFile.read((uint8_t *)&dataframe_read, sizeof(dataframe_read));  // Read the content of the file in dataframe_read struct
       //binFile.read((uint8_t *)&buffer_read, sizeof(dataframe_read));
       memcpy(buffer_read, &dataframe_read, sizeof(dataframe_read));      // Copy dataframe_read struct in uint8_t buffer for Iridium sending
@@ -633,7 +643,7 @@ void readSDbinary_to_struct(){
     }
     for(int j=0; j<=sizeof(buffer_read); j++) buffer_read_340[i*sizeof(buffer_read)+j] = buffer_read[j];   // Push buffer_read in buffer_read_340 
   }                                                                     
-  if(debug_mode2){                                                        // Testing if structure and buffers are correctly completed
+  if(debug_mode2){                                                       // Testing if structure and buffers are correctly completed
     Serial.print("dataframe_read : ");
     for(int i = 0; i < sizeof(dataframe_read); i++) Serial.printf("%02x", (unsigned int) ((char*)&dataframe_read)[i]);
     Serial.print("buffer_read : ");
